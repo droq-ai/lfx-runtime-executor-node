@@ -112,6 +112,15 @@ async def load_component_class(
             except (ImportError, AttributeError) as e:
                 print(f"[EXECUTOR] ❌ Failed to load {class_name} from {correct_module}: {e}")
                 logger.warning(f"Failed to load {class_name} from mapped module {correct_module}: {e}")
+                # Fall back to code execution if module import fails
+                if component_code:
+                    print(f"[EXECUTOR] Falling back to code execution for {class_name}")
+                    logger.info(f"Falling back to code execution for {class_name}")
+                    try:
+                        return await load_component_from_code(component_code, class_name)
+                    except Exception as code_error:
+                        logger.error(f"Code execution also failed for {class_name}: {code_error}")
+                        # Continue to next fallback attempt
         else:
             print(f"[EXECUTOR] ❌ Component {class_name} not found in components.json (available: {list(_component_map.keys())[:5]}...)")
             logger.warning(f"Component {class_name} not found in components.json mapping")
