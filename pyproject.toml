@@ -17,6 +17,7 @@ dependencies = [
     "httpx>=0.24.0,<1.0.0",         # For HTTP client
     "structlog>=25.4.0,<26.0.0",    # For structured logging
     "python-dotenv>=1.0.0,<2.0.0",  # For environment variables
+    "nats-py>=2.6.0,<3.0.0",        # For NATS streaming
     # Note: Langflow dependencies will be added via path or package reference
 ]
 

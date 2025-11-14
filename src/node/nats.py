@@ -54,20 +54,39 @@ class NATSClient:
         """Ensure the JetStream exists, create if it doesn't."""
         try:
             # Try to get stream info
-            await self.js.stream_info(self.stream_name)
+            stream_info = await self.js.stream_info(self.stream_name)
             logger.info(f"Stream '{self.stream_name}' already exists")
-        except Exception:
+            logger.info(f"Stream subjects: {stream_info.config.subjects}")
+            
+            # Check if 'droq.local.public.>' is in subjects, if not, update stream
+            required_subject = "droq.local.public.>"
+            if required_subject not in stream_info.config.subjects:
+                logger.warning(f"Stream '{self.stream_name}' missing required subject '{required_subject}', updating...")
+                subjects = list(stream_info.config.subjects) + [required_subject]
+                await self.js.update_stream(
+                    StreamConfig(
+                        name=self.stream_name,
+                        subjects=subjects,
+                        retention=stream_info.config.retention,
+                        storage=stream_info.config.storage,
+                    )
+                )
+                logger.info(f"Stream '{self.stream_name}' updated with subject '{required_subject}'")
+        except Exception as e:
             # Stream doesn't exist, create it
-            logger.info(f"Creating stream '{self.stream_name}'")
+            logger.info(f"Creating stream '{self.stream_name}' (error: {e})")
             await self.js.add_stream(
                 StreamConfig(
                     name=self.stream_name,
-                    subjects=[f"{self.stream_name}.>"],
+                    subjects=[
+                        f"{self.stream_name}.>",  # Backward compatibility
+                        "droq.local.public.>",    # Full topic path format
+                    ],
                     retention=RetentionPolicy.WORK_QUEUE,
                     storage=StorageType.FILE,
                 )
             )
-            logger.info(f"Stream '{self.stream_name}' created")
+            logger.info(f"Stream '{self.stream_name}' created with subjects: ['{self.stream_name}.>', 'droq.local.public.>']")
 
     async def publish(
         self,
@@ -79,7 +98,7 @@ class NATSClient:
         Publish a message to a NATS subject.
 
         Args:
-            subject: NATS subject to publish to
+            subject: NATS subject to publish to (can be full topic path or relative)
             data: Data to publish (will be JSON encoded)
             headers: Optional headers to include
         """
@@ -87,19 +106,26 @@ class NATSClient:
             raise RuntimeError("Not connected to NATS. Call connect() first.")
 
         try:
-            # Full subject with stream prefix
-            full_subject = f"{self.stream_name}.{subject}"
+            # If subject starts with "droq.", use it as full topic path
+            # Otherwise, prefix with stream name for backward compatibility
+            if subject.startswith("droq."):
+                full_subject = subject
+            else:
+                full_subject = f"{self.stream_name}.{subject}"
 
             # Encode data as JSON
             payload = json.dumps(data).encode()
+            payload_size = len(payload)
+            
+            logger.info(f"[NATS] Publishing to subject: {full_subject}, payload size: {payload_size} bytes")
 
             # Publish with headers if provided
             if headers:
-                await self.js.publish(full_subject, payload, headers=headers)
+                ack = await self.js.publish(full_subject, payload, headers=headers)
             else:
-                await self.js.publish(full_subject, payload)
+                ack = await self.js.publish(full_subject, payload)
 
-            logger.debug(f"Published message to {full_subject}")
+            logger.info(f"[NATS] ✅ Published message to {full_subject} (seq: {ack.seq if hasattr(ack, 'seq') else 'N/A'})")
         except Exception as e:
             logger.error(f"Failed to publish message: {e}")
             raise
