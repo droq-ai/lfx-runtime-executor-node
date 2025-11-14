@@ -1,49 +1,124 @@
-# Dockerfile template for Droq nodes
-# This is an agnostic template - customize as needed for your node
+# syntax=docker/dockerfile:1
+# Dockerfile for Langflow Executor Node
+# Build from repo root: docker build -f node/Dockerfile -t langflow-executor-node .
+# OR build from node directory: docker build -f Dockerfile -t langflow-executor-node ../
 
-FROM python:3.11-slim
+################################
+# BUILDER STAGE
+# Build dependencies and Langflow
+################################
+FROM ghcr.io/astral-sh/uv:python3.12-alpine AS builder
 
-# Set working directory
+# Install build dependencies
+# Retry on failure to handle transient network issues
+RUN set -e; \
+    for i in 1 2 3; do \
+        apk update && \
+        apk add --no-cache \
+            build-base \
+            libaio-dev \
+            linux-headers && \
+        break || sleep 5; \
+    done
+
 WORKDIR /app
 
-# Install system dependencies
-# Uncomment and add system packages as needed:
-# RUN apt-get update && apt-get install -y \
-#     gcc \
-#     g++ \
-#     make \
-#     curl \
-#     && rm -rf /var/lib/apt/lists/*
+# Enable bytecode compilation
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
 
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Copy Langflow dependency files first (for better caching)
+# These paths work when building from repo root
+COPY app/src/lfx/pyproject.toml /app/src/lfx/pyproject.toml
+COPY app/src/lfx/README.md /app/src/lfx/README.md
 
-# Copy dependency files
-COPY pyproject.toml uv.lock* ./
+# Copy executor node dependency files
+COPY node/pyproject.toml /app/node/pyproject.toml
 
-# Install dependencies using uv
-# Install dependencies directly (not as editable package)
-RUN uv pip install --system nats-py aiohttp || \
-    (uv pip compile pyproject.toml -o requirements.txt && \
-     uv pip install --system -r requirements.txt)
+# Copy Langflow source (needed for installation)
+COPY app/src/lfx/src /app/src/lfx/src
 
-# Copy source code
-COPY src/ ./src/
+# Install Langflow (lfx) package with all dependencies
+# This installs lfx and all its dependencies from pyproject.toml
+RUN --mount=type=cache,target=/root/.cache/uv \
+    cd /app/src/lfx && \
+    uv pip install --system --no-cache -e .
 
-# Create non-root user for security
-RUN useradd -m -u 1000 nodeuser && chown -R nodeuser:nodeuser /app
-USER nodeuser
+# Install common Langchain integration packages needed by components
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system --no-cache \
+    langchain-anthropic \
+    langchain-openai \
+    langchain-community \
+    langchain-google-genai \
+    langchain-mistralai \
+    langchain-groq \
+    langchain-cohere \
+    langchain-ollama \
+    langchain-ibm \
+    langchain-google-vertexai || echo "Warning: Some langchain packages failed to install"
+
+# Install executor node dependencies
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system --no-cache \
+    fastapi \
+    "uvicorn[standard]" \
+    pydantic \
+    httpx \
+    structlog \
+    python-dotenv
+
+# Copy executor node source
+COPY node/src /app/node/src
+
+# Copy components.json mapping file
+COPY node/components.json /app/components.json
+
+################################
+# RUNTIME STAGE
+# Minimal runtime image
+################################
+FROM python:3.12-alpine AS runtime
+
+# Install runtime dependencies with retry
+RUN set -e; \
+    for i in 1 2 3; do \
+        apk update && \
+        apk add --no-cache curl && \
+        break || sleep 5; \
+    done
+
+# Create non-root user
+RUN adduser -D -u 1000 -G root -h /app -s /sbin/nologin executor
+
+WORKDIR /app
+
+# Copy Python packages from builder
+# uv installs to /usr/local when using --system
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copy application code
+COPY --from=builder --chown=executor:root /app/node/src /app/src
+COPY --from=builder --chown=executor:root /app/src/lfx/src /app/src/lfx/src
+COPY --from=builder --chown=executor:root /app/components.json /app/components.json
 
 # Set environment variables
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/src:/app/src/lfx/src
 ENV PYTHONUNBUFFERED=1
+ENV HOST=0.0.0.0
+ENV PORT=8000
+ENV LANGFLOW_EXECUTOR_NODE_URL=http://localhost:8000
 
-# Optional: Health check
-# Uncomment and customize as needed:
-# HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-#     CMD python -c "import sys; sys.exit(0)"
+# Switch to non-root user
+USER executor
 
-# Run the node
-# Update this command to match your entry point
-CMD ["uv", "run", "python", "-m", "node.main"]
+# Expose port
+EXPOSE 8000
 
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run the executor node
+CMD ["python", "-m", "uvicorn", "node.api:app", "--host", "0.0.0.0", "--port", "8000"]

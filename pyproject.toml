@@ -1,27 +1,23 @@
 [project]
-name = "droq-node-template"
+name = "langflow-executor-node"
 version = "0.1.0"
-description = "A Python template for building Droq nodes"
+description = "Langflow Component Executor Node - Executes Langflow components in isolated environments"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Droq Team", email = "team@droq.ai"}
 ]
-keywords = ["droq", "node", "template", "workflow"]
-
-# Minimal dependencies - add what you need for your node
-# Common options (uncomment and adjust versions as needed):
-# dependencies = [
-#     "pydantic>=2.0.0",     # For configuration validation
-#     "pyyaml>=6.0",         # For YAML parsing
-#     "PyNaCl>=1.5.0",       # For encryption
-#     "requests>=2.31.0",     # For HTTP requests (sync alternative)
-# ]
+keywords = ["droq", "langflow", "executor", "component", "workflow"]
 
 dependencies = [
-    "nats-py>=2.3.0",      # For NATS messaging and JetStream
-    "aiohttp>=3.8.0",      # For HTTP/API calls
+    "fastapi>=0.115.13,<1.0.0",      # For HTTP API server
+    "uvicorn[standard]>=0.34.3,<1.0.0",  # ASGI server
+    "pydantic>=2.0.0,<3.0.0",       # For request/response validation
+    "httpx>=0.24.0,<1.0.0",         # For HTTP client
+    "structlog>=25.4.0,<26.0.0",    # For structured logging
+    "python-dotenv>=1.0.0,<2.0.0",  # For environment variables
+    # Note: Langflow dependencies will be added via path or package reference
 ]
 
 [project.optional-dependencies]
@@ -34,7 +30,7 @@ dev = [
 ]
 
 [project.scripts]
-node = "node.main:main"
+executor-node = "node.main:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -42,6 +38,7 @@ build-backend = "hatchling.build"
 
 [tool.hatchling.build.targets.wheel]
 packages = ["src/node"]
+include = ["src/node/**/*"]
 
 [tool.black]
 line-length = 100
