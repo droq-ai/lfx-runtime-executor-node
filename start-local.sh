@@ -20,54 +20,33 @@ if [ ! -d ".venv" ] || [ ! -f "uv.lock" ]; then
     uv sync
 fi
 
-# Check if Langflow is installed
+# Ensure we run with the local uv-managed virtual environment
+if [ -d ".venv" ]; then
+    # Avoid contaminating other envs if already active
+    if [ -n "$VIRTUAL_ENV" ] && [ "$VIRTUAL_ENV" != "$(pwd)/.venv" ]; then
+        echo "Deactivating other virtualenv ($VIRTUAL_ENV)..."
+        deactivate || true
+    fi
+    if [ "$VIRTUAL_ENV" != "$(pwd)/.venv" ]; then
+        echo "Activating local virtualenv (.venv)..."
+        # shellcheck source=/dev/null
+        . ".venv/bin/activate"
+    fi
+fi
+
+# Install local lfx package in editable mode so executor node uses latest code
+if [ -d "lfx/src" ]; then
+    echo "Installing local lfx package (editable mode)..."
+    uv pip install -e ./lfx/src >/dev/null 2>&1 || true
+fi
+
+# Check if Langflow is installed (fallback to backend package if local doesn't exist)
 if ! python -c "import lfx" 2>/dev/null; then
-    echo "Installing Langflow dependencies..."
+    echo "Installing Langflow dependencies from backend..."
     uv pip install -e ../app/src/lfx
 fi
 
-# Install common Langchain integration packages needed by components
-# Check and install missing packages
-echo "Checking Langchain integration packages..."
-MISSING_PACKAGES=()
-
-if ! python -c "import langchain_anthropic" 2>/dev/null; then
-    MISSING_PACKAGES+=("langchain-anthropic")
-fi
-if ! python -c "import langchain_openai" 2>/dev/null; then
-    MISSING_PACKAGES+=("langchain-openai")
-fi
-if ! python -c "import langchain_community" 2>/dev/null; then
-    MISSING_PACKAGES+=("langchain-community")
-fi
-if ! python -c "import langchain_google_genai" 2>/dev/null; then
-    MISSING_PACKAGES+=("langchain-google-genai")
-fi
-if ! python -c "import langchain_mistralai" 2>/dev/null; then
-    MISSING_PACKAGES+=("langchain-mistralai")
-fi
-if ! python -c "import langchain_groq" 2>/dev/null; then
-    MISSING_PACKAGES+=("langchain-groq")
-fi
-if ! python -c "import langchain_cohere" 2>/dev/null; then
-    MISSING_PACKAGES+=("langchain-cohere")
-fi
-if ! python -c "import langchain_ollama" 2>/dev/null; then
-    MISSING_PACKAGES+=("langchain-ollama")
-fi
-if ! python -c "import langchain_ibm" 2>/dev/null; then
-    MISSING_PACKAGES+=("langchain-ibm")
-fi
-if ! python -c "import langchain_google_vertexai" 2>/dev/null; then
-    MISSING_PACKAGES+=("langchain-google-vertexai")
-fi
-
-if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
-    echo "Installing missing Langchain integration packages: ${MISSING_PACKAGES[*]}"
-    uv pip install "${MISSING_PACKAGES[@]}" || echo "Warning: Some langchain packages failed to install (this is OK if not needed)"
-else
-    echo "All common Langchain integration packages are installed."
-fi
+echo "Skipping automatic LangChain package reinstall (managed via pyproject)."
 
 # Get configuration from environment or use defaults
 HOST="${HOST:-0.0.0.0}"
@@ -86,8 +65,8 @@ echo "Press Ctrl+C to stop"
 echo ""
 
 # Run the executor node
-# Add lfx to PYTHONPATH so components can be imported directly
-export PYTHONPATH="lfx/src:src"
+# Add lfx to PYTHONPATH so components can be imported directly (local source takes precedence)
+export PYTHONPATH="$(pwd)/lfx/src:$(pwd)/src:${PYTHONPATH:-}"
 export HOST="${HOST:-0.0.0.0}"
 export PORT="${PORT:-8000}"
 export RELOAD="${RELOAD:-true}"

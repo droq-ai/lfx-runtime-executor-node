@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 
 # Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "lfx" / "src"))
 
 
 @pytest.fixture(scope="session")

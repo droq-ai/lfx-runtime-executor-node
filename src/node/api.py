@@ -12,6 +12,7 @@ import uuid
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from langchain_core.tools import BaseTool, Tool
 from pydantic import BaseModel
 
 # Add lfx to Python path if it exists in the node directory
@@ -451,6 +452,102 @@ def deserialize_input_value(value: Any) -> Any:
     return {k: deserialize_input_value(v) for k, v in value.items()}
 
 
+def sanitize_tool_inputs(component_params: dict[str, Any], component_class: str | None = None) -> list[BaseTool] | None:
+    """Ensure `tools` parameter only contains LangChain tool objects.
+
+    When components (especially agents) run in tool mode, the backend currently
+    serializes tool objects into plain dictionaries. Those dictionaries do not
+    expose attributes like `.name`, which causes `validate_tool_names` to raise
+    AttributeError. Drop any invalid entries so execution can proceed without
+    crashing. Workflows that genuinely depend on those tools will still log a
+    warning, but at least the agent can run (albeit without tool support).
+    """
+
+    tools_value = component_params.get("tools")
+    if not tools_value:
+        return None
+
+    candidates = tools_value if isinstance(tools_value, list) else [tools_value]
+    valid_tools: list[BaseTool] = []
+    invalid_types: list[str] = []
+    for tool in candidates:
+        if isinstance(tool, BaseTool):
+            valid_tools.append(tool)
+            continue
+        reconstructed = reconstruct_tool(tool)
+        if reconstructed:
+            valid_tools.append(reconstructed)
+            continue
+        invalid_types.append(type(tool).__name__)
+
+    if invalid_types:
+        logger.warning(
+            "[%s] Dropping %d invalid tool payload(s); expected LangChain BaseTool instances, got: %s",
+            component_class or "Component",
+            len(invalid_types),
+            ", ".join(sorted(set(invalid_types))),
+        )
+
+    component_params["tools"] = valid_tools
+    return valid_tools
+
+
+def reconstruct_tool(value: Any) -> BaseTool | None:
+    """Attempt to rebuild a LangChain tool from serialized metadata."""
+    if not isinstance(value, dict):
+        return None
+
+    name = value.get("name")
+    description = value.get("description", "")
+    metadata = value.get("metadata", {})
+    if not name:
+        return None
+
+    def _tool_func(*args, **kwargs):
+        logger.warning(
+            "Tool '%s' invoked in executor context; returning placeholder response.",
+            name,
+        )
+        return {
+            "tool": name,
+            "status": "unavailable",
+            "message": "Tool cannot execute inside executor context; please route to appropriate node.",
+        }
+
+    try:
+        # Tool from langchain_core.tools can wrap simple callables
+        reconstructed = Tool(
+            name=name,
+            description=description or metadata.get("display_description", ""),
+            func=_tool_func,
+            coroutine=None,
+        )
+        # CRITICAL: Preserve ALL metadata including _component_state for remote tool execution
+        # The backend serializes component_state in metadata, and we MUST preserve it
+        reconstructed.metadata = metadata.copy() if metadata else {}
+        
+        # Log if _component_state is present (for debugging)
+        if "_component_state" in reconstructed.metadata:
+            component_state = reconstructed.metadata["_component_state"]
+            params = component_state.get("parameters", {}) if isinstance(component_state, dict) else {}
+            logger.info(
+                "Reconstructed tool '%s' with _component_state containing %d parameters: %s",
+                name,
+                len(params),
+                list(params.keys()) if params else "NONE",
+            )
+        else:
+            logger.warning(
+                "Reconstructed tool '%s' is MISSING _component_state in metadata - remote execution may fail!",
+                name,
+            )
+        
+        return reconstructed
+    except Exception as exc:
+        logger.warning("Failed to reconstruct tool '%s': %s", name, exc)
+        return None
+
+
 @app.post("/api/v1/execute", response_model=ExecutionResponse)
 async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
     """
@@ -489,15 +586,21 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
         
         # Merge input_values (runtime values from upstream components) into parameters
         # These override static parameters since they contain the actual workflow data
+        deserialized_inputs: dict[str, Any] = {}
         if request.component_state.input_values:
             # Deserialize input values to reconstruct Data/Message objects
-            deserialized_inputs = {
-                k: deserialize_input_value(v) 
-                for k, v in request.component_state.input_values.items()
-            }
+            for key, value in request.component_state.input_values.items():
+                deserialized = deserialize_input_value(value)
+                # Skip None values to avoid overriding defaults with invalid types
+                if deserialized is None:
+                    logger.debug(
+                        "Skipping None input value for %s to preserve component default", key
+                    )
+                    continue
+                deserialized_inputs[key] = deserialized
             component_params.update(deserialized_inputs)
             logger.info(
-                f"Merged {len(request.component_state.input_values)} input values from upstream components "
+                f"Merged {len(deserialized_inputs)} input values from upstream components "
                 f"(deserialized to proper types)"
             )
         
@@ -506,6 +609,17 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
             for key, value in request.component_state.config.items():
                 component_params[f"_{key}"] = value
 
+        if request.component_state.component_class == "AgentComponent":
+            logger.info(
+                "[AgentComponent] input keys: %s; tools raw payload: %s",
+                list((request.component_state.input_values or {}).keys()),
+                (request.component_state.input_values or {}).get("tools"),
+            )
+            if request.component_state.input_values and request.component_state.input_values.get("tools"):
+                sample_tool = request.component_state.input_values["tools"][0]
+                logger.debug("[AgentComponent] Sample tool payload keys: %s", list(sample_tool.keys()))
+                logger.debug("[AgentComponent] Sample tool metadata: %s", sample_tool.get("metadata"))
+
         logger.info(
             f"Instantiating {request.component_state.component_class} "
             f"with {len(component_params)} parameters "
@@ -513,7 +627,35 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
             f"inputs: {len(request.component_state.input_values or {})}, "
             f"config: {len(request.component_state.config or {})})"
         )
+        # Drop None values to mimic Langflow's default handling (unset fields)
+        if component_params:
+            filtered_params = {
+                key: value for key, value in component_params.items() if value is not None
+            }
+            if len(filtered_params) != len(component_params):
+                logger.debug(
+                    "Removed %d None-valued parameters before instantiation",
+                    len(component_params) - len(filtered_params),
+                )
+            component_params = filtered_params
+
+        # Ensure `tools` parameter contains valid tool instances only
+        sanitized_tools = sanitize_tool_inputs(component_params, request.component_state.component_class)
+        if sanitized_tools is not None and "tools" in deserialized_inputs:
+            deserialized_inputs["tools"] = sanitized_tools
+
         component = component_class(**component_params)
+
+        # Ensure runtime inputs also populate component attributes for template rendering
+        if deserialized_inputs:
+            try:
+                component.set_attributes(deserialized_inputs)
+            except Exception as attr_err:
+                logger.warning(
+                    "Failed to set component attributes from input values (%s): %s",
+                    request.component_state.component_class,
+                    attr_err,
+                )
 
         # Get the method
         if not hasattr(component, request.method_name):

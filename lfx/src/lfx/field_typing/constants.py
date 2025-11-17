@@ -16,7 +16,6 @@ try:
     from langchain_core.embeddings import Embeddings
     from langchain_core.language_models import BaseLanguageModel, BaseLLM
     from langchain_core.language_models.chat_models import BaseChatModel
-    from langchain_core.memory import BaseMemory
     from langchain_core.output_parsers import BaseLLMOutputParser, BaseOutputParser
     from langchain_core.prompts import BasePromptTemplate, ChatPromptTemplate, PromptTemplate
     from langchain_core.retrievers import BaseRetriever
@@ -124,6 +123,20 @@ class Code:
     """Code type for custom components."""
 
 
+try:
+    from langchain_core.memory import BaseMemory as _BaseMemoryImport
+except ImportError:
+    try:
+        from langchain.memory import BaseMemory as _BaseMemoryImport
+    except ImportError:
+        class _BaseMemoryImport:
+            """Fallback BaseMemory stub when langchain memory module is unavailable."""
+
+            pass
+
+BaseMemory = _BaseMemoryImport
+
+
 # Langchain base types mapping
 LANGCHAIN_BASE_TYPES = {
     "Chain": Chain,
@@ -171,7 +184,10 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseLanguageModel, BaseLLM
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.memory import BaseMemory
+try:
+    from langchain_core.memory import BaseMemory
+except ImportError:  # pragma: no cover - fallback for older LangChain stacks
+    from langchain.memory import BaseMemory
 from langchain_core.output_parsers import BaseLLMOutputParser, BaseOutputParser
 from langchain_core.prompts import BasePromptTemplate, ChatPromptTemplate, PromptTemplate
 from langchain_core.retrievers import BaseRetriever

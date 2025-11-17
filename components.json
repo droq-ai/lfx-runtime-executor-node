@@ -4,7 +4,6 @@
   "APIRequestComponent": "lfx.components.data.api_request",
   "AddContentToPage": "lfx.components.Notion.add_content_to_page",
   "AgentComponent": "lfx.components.agents.agent",
-  "AgentQL": "lfx.components.agentql.agentql_api",
   "AlterMetadataComponent": "lfx.components.processing.alter_metadata",
   "AmazonBedrockComponent": "lfx.components.amazon.amazon_bedrock_model",
   "AmazonBedrockConverseComponent": "lfx.components.amazon.amazon_bedrock_converse",

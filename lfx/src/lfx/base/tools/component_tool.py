@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import logging
 import re
 from typing import TYPE_CHECKING, Literal
 
@@ -24,6 +26,8 @@ if TYPE_CHECKING:
     from lfx.io import Output
     from lfx.schema.content_block import ContentBlock
     from lfx.schema.dotdict import dotdict
+
+logger = logging.getLogger(__name__)
 
 TOOL_TYPES_SET = {"Tool", "BaseTool", "StructuredTool"}
 
@@ -168,6 +172,54 @@ class ComponentToolkit:
             output.name == TOOL_OUTPUT_NAME or any(tool_type in output.types for tool_type in TOOL_TYPES_SET)
         )
 
+    def _attach_runtime_metadata(
+        self,
+        tool: BaseTool | StructuredTool,
+        output: Output,
+        *,
+        is_async: bool,
+        args_schema: type | None,
+    ) -> None:
+        """Annotate tool metadata with component/runtime information."""
+        metadata = tool.metadata or {}
+        metadata["_component_method"] = output.method
+        metadata["_component_is_async"] = is_async
+        metadata["component_class"] = self.component.__class__.__name__
+        metadata["component_module"] = self.component.__class__.__module__
+        metadata["component_id"] = self.component.get_id()
+        metadata["stream_topic"] = self.component._build_stream_topic()  # noqa: SLF001
+
+        try:
+            component_state = self.component._serialize_for_executor()  # noqa: SLF001
+            metadata["_component_state"] = component_state
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to serialize component state for tool '%s': %s",
+                tool.name,
+                exc,
+            )
+
+        metadata["_tool_input_keys"] = self._extract_input_keys(args_schema, output)
+
+        executor_meta = self.component.get_executor_node_metadata()
+        if executor_meta:
+            metadata["executor_node"] = executor_meta
+        tool.metadata = metadata
+
+    @staticmethod
+    def _extract_input_keys(args_schema: type | None, output: Output) -> list[str]:
+        """Return list of input field names for this tool."""
+        keys: list[str] = []
+        if args_schema is not None:
+            for attr_name in ("model_fields", "__fields__"):
+                schema_fields = getattr(args_schema, attr_name, None)
+                if schema_fields:
+                    keys = list(schema_fields.keys())
+                    break
+        if not keys and getattr(output, "required_inputs", None):
+            keys = list(output.required_inputs)
+        return keys
+
     def get_tools(
         self,
         tool_name: str | None = None,
@@ -228,37 +280,37 @@ class ComponentToolkit:
             formatted_name = _format_tool_name(name)
             event_manager = self.component.get_event_manager()
             if asyncio.iscoroutinefunction(output_method):
-                tools.append(
-                    StructuredTool(
-                        name=formatted_name,
-                        description=build_description(self.component),
-                        coroutine=_build_output_async_function(self.component, output_method, event_manager),
-                        args_schema=args_schema,
-                        handle_tool_error=True,
-                        callbacks=callbacks,
-                        tags=[formatted_name],
-                        metadata={
-                            "display_name": formatted_name,
-                            "display_description": build_description(self.component),
-                        },
-                    )
+                structured_tool = StructuredTool(
+                    name=formatted_name,
+                    description=build_description(self.component),
+                    coroutine=_build_output_async_function(self.component, output_method, event_manager),
+                    args_schema=args_schema,
+                    handle_tool_error=True,
+                    callbacks=callbacks,
+                    tags=[formatted_name],
+                    metadata={
+                        "display_name": formatted_name,
+                        "display_description": build_description(self.component),
+                    },
                 )
+                tools.append(structured_tool)
+                self._attach_runtime_metadata(structured_tool, output, is_async=True, args_schema=args_schema)
             else:
-                tools.append(
-                    StructuredTool(
-                        name=formatted_name,
-                        description=build_description(self.component),
-                        func=_build_output_function(self.component, output_method, event_manager),
-                        args_schema=args_schema,
-                        handle_tool_error=True,
-                        callbacks=callbacks,
-                        tags=[formatted_name],
-                        metadata={
-                            "display_name": formatted_name,
-                            "display_description": build_description(self.component),
-                        },
-                    )
+                structured_tool = StructuredTool(
+                    name=formatted_name,
+                    description=build_description(self.component),
+                    func=_build_output_function(self.component, output_method, event_manager),
+                    args_schema=args_schema,
+                    handle_tool_error=True,
+                    callbacks=callbacks,
+                    tags=[formatted_name],
+                    metadata={
+                        "display_name": formatted_name,
+                        "display_description": build_description(self.component),
+                    },
                 )
+                tools.append(structured_tool)
+                self._attach_runtime_metadata(structured_tool, output, is_async=False, args_schema=args_schema)
         if len(tools) == 1 and (tool_name or tool_description):
             tool = tools[0]
             tool.name = _format_tool_name(str(tool_name)) or tool.name

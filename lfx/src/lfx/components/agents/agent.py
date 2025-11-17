@@ -1,7 +1,13 @@
+import asyncio
 import json
+import os
 import re
+import uuid
+from copy import deepcopy
+from typing import Any
 
-from langchain_core.tools import StructuredTool, Tool
+import httpx
+from langchain_core.tools import StructuredTool, Tool, ToolException
 from pydantic import ValidationError
 
 from lfx.base.agents.agent import LCToolsAgentComponent
@@ -17,7 +23,7 @@ from lfx.base.models.model_utils import get_model_name
 from lfx.components.helpers.current_date import CurrentDateComponent
 from lfx.components.helpers.memory import MemoryComponent
 from lfx.components.langchain_utilities.tool_calling import ToolCallingAgentComponent
-from lfx.custom.custom_component.component import get_component_toolkit
+from lfx.custom.custom_component.component import get_component_toolkit, get_local_node_id
 from lfx.custom.utils import update_component_build_config
 from lfx.helpers.base_model import build_model_from_schema
 from lfx.inputs.inputs import BoolInput
@@ -178,6 +184,8 @@ class AgentComponent(ToolCallingAgentComponent):
 
     async def get_agent_requirements(self):
         """Get the agent requirements for the agent."""
+        print("[AGENT] 🚀 get_agent_requirements CALLED", flush=True)
+        logger.info("🚀 get_agent_requirements CALLED")
         llm_model, display_name = await self.get_llm()
         if llm_model is None:
             msg = "No language model selected. Please choose a model to proceed."
@@ -199,11 +207,21 @@ class AgentComponent(ToolCallingAgentComponent):
                 msg = "CurrentDateComponent must be converted to a StructuredTool"
                 raise TypeError(msg)
             self.tools.append(current_date_tool)
+        
+        print(f"[AGENT] 🔧 About to call _prepare_remote_tools with {len(self.tools) if self.tools else 0} tool(s)", flush=True)
+        logger.info("🔧 About to call _prepare_remote_tools with tools=%s", self.tools)
+        logger.info("🔧 Tools count: %d, Tools type: %s", len(self.tools) if self.tools else 0, type(self.tools))
+        self.tools = self._prepare_remote_tools(self.tools or [])
+        print(f"[AGENT] ✅ _prepare_remote_tools returned, final tools count: {len(self.tools) if self.tools else 0}", flush=True)
+        logger.info("✅ _prepare_remote_tools returned, final tools count: %d", len(self.tools) if self.tools else 0)
         return llm_model, self.chat_history, self.tools
 
     async def message_response(self) -> Message:
         try:
+            print("[AGENT] 🎯 message_response CALLED - About to get agent requirements", flush=True)
+            logger.info("🎯 message_response CALLED - About to get agent requirements")
             llm_model, self.chat_history, self.tools = await self.get_agent_requirements()
+            logger.info("🎯 Got agent requirements - tools count: %d", len(self.tools) if self.tools else 0)
             # Set up and run agent
             self.set(
                 llm=llm_model,
@@ -212,7 +230,9 @@ class AgentComponent(ToolCallingAgentComponent):
                 input_value=self.input_value,
                 system_prompt=self.system_prompt,
             )
+            logger.info("🎯 Creating agent runnable with %d tools", len(self.tools) if self.tools else 0)
             agent = self.create_agent_runnable()
+            logger.info("🎯 Running agent...")
             result = await self.run_agent(agent)
 
             # Store result for potential JSON output
@@ -607,3 +627,605 @@ class AgentComponent(ToolCallingAgentComponent):
         if hasattr(self, "tools_metadata"):
             tools = component_toolkit(component=self, metadata=self.tools_metadata).update_tools_metadata(tools=tools)
         return tools
+
+    def _prepare_remote_tools(self, tools: list[Tool]) -> list[Tool]:
+        print(f"[AGENT] 🔍 _prepare_remote_tools CALLED with {len(tools) if tools else 0} tool(s)", flush=True)
+        logger.info("🔍 _prepare_remote_tools CALLED with %d tool(s)", len(tools) if tools else 0)
+        if not tools:
+            logger.info("_prepare_remote_tools: No tools to process")
+            return tools
+
+        logger.info(
+            "_prepare_remote_tools: Processing %d tool(s) for remote routing",
+            len(tools),
+        )
+        for tool in tools:
+            metadata = getattr(tool, "metadata", {}) or {}
+            tool_name = getattr(tool, "name", "<unknown>")
+            metadata_keys = sorted(metadata.keys()) if metadata else []
+            logger.info(
+                "_prepare_remote_tools: tool='%s' metadata_keys=%s metadata=%s",
+                tool_name,
+                metadata_keys,
+                metadata,
+            )
+        wrapped: list[Tool] = []
+        for tool in tools:
+            wrapped.append(self._maybe_wrap_remote_tool(tool))
+        remote_count = sum(1 for t in wrapped if getattr(t, "metadata", {}).get("_remote_proxy"))
+        if remote_count > 0:
+            logger.info(
+                "_prepare_remote_tools: Wrapped %d/%d tool(s) for remote execution",
+                remote_count,
+                len(wrapped),
+            )
+        else:
+            logger.warning(
+                "_prepare_remote_tools: NO tools were wrapped for remote execution (all %d tools will execute locally)",
+                len(wrapped),
+            )
+        return wrapped
+
+    def _maybe_wrap_remote_tool(self, tool: Tool) -> Tool:
+        metadata = getattr(tool, "metadata", {}) or {}
+        tool_name = getattr(tool, "name", "<unknown>")
+        
+        print(f"[AGENT] _maybe_wrap_remote_tool: tool='{tool_name}', metadata_keys={sorted(metadata.keys()) if metadata else []}", flush=True)
+        
+        if metadata.get("_remote_proxy"):
+            print(f"[AGENT] Tool '{tool_name}' already has _remote_proxy flag, skipping", flush=True)
+            return tool
+
+        # For plain Tool objects, try to look up component from tool name or convert to StructuredTool
+        if not isinstance(tool, StructuredTool):
+            print(f"[AGENT] Tool '{tool_name}' is not a StructuredTool (type={type(tool).__name__}), attempting to recover metadata...", flush=True)
+            
+            # Try to find component_class from metadata or by looking up tool name
+            component_class = metadata.get("component_class")
+            
+            # If still no component_class, try to infer from tool name
+            # Common patterns: build_output -> AgentQL, get_current_date -> CurrentDateComponent
+            if not component_class:
+                # Try to infer component class from tool name
+                # This is a fallback - ideally metadata should be preserved during serialization
+                tool_to_component_map = {
+                    "build_output": "AgentQL",  # AgentQL component's output method
+                    "get_current_date": "CurrentDateComponent",
+                }
+                component_class = tool_to_component_map.get(tool_name)
+                if component_class:
+                    print(f"[AGENT] Inferred component_class='{component_class}' from tool name '{tool_name}'", flush=True)
+                    metadata["component_class"] = component_class
+                else:
+                    print(f"[AGENT] Tool '{tool_name}' missing component_class; cannot route without component info", flush=True)
+                    logger.debug(
+                        "Tool '%s' is a plain Tool without component_class metadata; cannot route via registry.",
+                        tool.name,
+                    )
+                    return tool
+            
+            # If we found component_class, convert to StructuredTool to proceed
+            # We'll create args_schema later after we get executor_meta
+            args_schema = getattr(tool, "args_schema", None)
+            
+            tool = StructuredTool(
+                name=tool.name,
+                description=tool.description,
+                func=getattr(tool, "func", None),
+                coroutine=getattr(tool, "coroutine", None),
+                args_schema=args_schema,
+                handle_tool_error=getattr(tool, "handle_tool_error", True),
+                callbacks=getattr(tool, "callbacks", None),
+                tags=getattr(tool, "tags", None),
+                metadata=metadata,
+            )
+            print(f"[AGENT] Converted plain Tool '{tool_name}' to StructuredTool with component_class='{component_class}'", flush=True)
+
+        # Query registry automatically using component_class from metadata
+        component_class = metadata.get("component_class")
+        if not component_class:
+            print(f"[AGENT] Tool '{tool_name}' missing component_class metadata; cannot route via registry", flush=True)
+            logger.debug(
+                "Tool '%s' missing component_class metadata; cannot route via registry.",
+                tool.name,
+            )
+            return tool
+
+        print(f"[AGENT] Tool '{tool_name}' has component_class='{component_class}', querying registry...", flush=True)
+        from lfx.custom.custom_component.component import _fetch_executor_node_metadata
+        executor_meta = _fetch_executor_node_metadata(component_class)
+        if not executor_meta:
+            print(f"[AGENT] Registry returned no executor for component '{component_class}'; executing locally", flush=True)
+            logger.debug(
+                "Registry returned no executor for component '%s'; executing locally.",
+                component_class,
+            )
+            return tool
+
+        node_id = executor_meta.get("node_id")
+        local_node_id = get_local_node_id()
+        print(f"[AGENT] Registry returned executor_meta: node_id='{node_id}', local_node_id='{local_node_id}'", flush=True)
+        
+        if not node_id or node_id == local_node_id:
+            print(f"[AGENT] Tool '{tool_name}' should execute locally (node_id={node_id}, local={local_node_id})", flush=True)
+            return tool
+
+        print(
+            f"[AGENT] Registry routed tool '{tool_name}' (component={component_class}) to node '{node_id}'",
+            flush=True,
+        )
+        logger.info(
+            "Registry routed tool '%s' (component=%s) to node '%s'",
+            tool.name,
+            component_class,
+            node_id,
+        )
+
+        # Store executor metadata in tool metadata for later use
+        metadata["executor_node"] = executor_meta
+
+        method_name = metadata.get("_component_method")
+        component_state = metadata.get("_component_state")
+        
+        # If missing, try to reconstruct from available information
+        if method_name is None:
+            # The tool name is usually the method name
+            method_name = tool_name
+            metadata["_component_method"] = method_name
+            print(f"[AGENT] Reconstructed method_name='{method_name}' from tool name", flush=True)
+        
+        if component_state is None:
+            # Reconstruct minimal component_state from available information
+            # Get component_module from registry (it returns module_path)
+            component_module = executor_meta.get("module_path")
+            if not component_module:
+                # Fallback: try to look up in components.json
+                import json
+                import os
+                components_json_path = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+                    "components.json"
+                )
+                if os.path.exists(components_json_path):
+                    try:
+                        with open(components_json_path, "r") as f:
+                            components_map = json.load(f)
+                            component_module = components_map.get(component_class)
+                    except Exception:
+                        pass
+                
+                # Final fallback: construct from component_class
+                if not component_module:
+                    # Special cases for known components
+                    component_module_map = {
+                        "AgentQL": "lfx.components.agentql.agentql_api",
+                    }
+                    component_module = component_module_map.get(component_class, f"lfx.components.{component_class.lower()}")
+            
+            # Get stream topic from current component (agent)
+            stream_topic = None
+            if hasattr(self, "_build_stream_topic"):
+                try:
+                    stream_topic = self._build_stream_topic()
+                except Exception:
+                    pass
+            
+            if not stream_topic:
+                # Build stream topic manually if _build_stream_topic doesn't work
+                user_id = getattr(self, "user_id", None) or getattr(self, "_user_id", None)
+                flow_id = None
+                if hasattr(self, "graph") and self.graph:
+                    flow_id = getattr(self.graph, "flow_id", None)
+                elif hasattr(self, "_flow_id"):
+                    flow_id = self._flow_id
+                
+                if user_id and flow_id:
+                    component_id = metadata.get("component_id") or f"{component_class}-{tool_name}"
+                    stream_topic = f"droq.local.public.{user_id}.{flow_id}.{component_id}.out"
+            
+            if not stream_topic:
+                # Final fallback: generate a unique topic for this remote invocation
+                stream_topic = f"droq.remote.tools.{uuid.uuid4()}.{tool_name}.out"
+            
+            # Try to get component parameters from the graph if available
+            # This is a best-effort attempt - in executor node we may not have full graph access
+            parameters = {}
+            if hasattr(self, "graph") and self.graph and hasattr(self.graph, "vertices"):
+                try:
+                    # Try to find the component in the graph by component_id or component_class
+                    component_id_to_find = metadata.get("component_id")
+                    for vertex in self.graph.vertices:
+                        if hasattr(vertex, "custom_component") and vertex.custom_component:
+                            comp = vertex.custom_component
+                            if (component_id_to_find and comp.get_id() == component_id_to_find) or \
+                               (comp.__class__.__name__ == component_class):
+                                # Get the component's parameters
+                                if hasattr(comp, "_parameters"):
+                                    parameters = comp._parameters.copy() if comp._parameters else {}
+                                elif hasattr(comp, "get_parameters"):
+                                    parameters = comp.get_parameters() or {}
+                                print(f"[AGENT] Found component in graph, extracted {len(parameters)} parameters", flush=True)
+                                break
+                except Exception as exc:
+                    print(f"[AGENT] Could not extract parameters from graph: {exc}", flush=True)
+                    logger.debug(f"Could not extract component parameters from graph: {exc}")
+            
+            # Use component_state from metadata if available (includes parameters from backend)
+            component_state = metadata.get("_component_state")
+            if component_state:
+                # Update with any missing fields, but preserve existing parameters
+                component_state.setdefault("component_class", component_class)
+                component_state.setdefault("component_module", component_module)
+                component_state.setdefault("component_id", metadata.get("component_id") or f"{component_class}-{tool_name}")
+                component_state.setdefault("stream_topic", stream_topic)
+                component_state.setdefault("input_values", {})
+                # Merge any parameters we found from graph (but don't overwrite backend parameters)
+                if parameters:
+                    existing_params = component_state.get("parameters", {})
+                    component_state["parameters"] = {**existing_params, **parameters}
+                print(f"[AGENT] Using component_state from metadata for '{tool_name}' (includes parameters from backend): {list(component_state.get('parameters', {}).keys())}", flush=True)
+            else:
+                # Fallback: build minimal component_state (shouldn't happen if backend serialized correctly)
+                component_state = {
+                    "component_class": component_class,
+                    "component_module": component_module,
+                    "component_id": metadata.get("component_id") or f"{component_class}-{tool_name}",
+                    "stream_topic": stream_topic,
+                    "parameters": parameters,  # Include any parameters we found
+                    "input_values": {},  # Will be populated from tool args when invoked
+                }
+                metadata["_component_state"] = component_state
+                print(f"[AGENT] WARNING: Reconstructed component_state for '{tool_name}' (missing from metadata - backend should have included it!)", flush=True)
+            
+            metadata["_component_is_async"] = False  # Default to sync, can be updated if needed
+        
+        print(f"[AGENT] Tool '{tool_name}': method_name={method_name}, component_state={'present' if component_state else 'MISSING'}", flush=True)
+
+        # Try to create args_schema if missing (needed so agent knows what arguments to pass)
+        args_schema = getattr(tool, "args_schema", None)
+        if not args_schema:
+            try:
+                # Dynamically load component class and create args_schema from tool_mode inputs
+                component_module = executor_meta.get("module_path") or component_state.get("component_module")
+                if component_module:
+                    # Import the module - component_module is the full module path like "lfx.components.agentql.agentql_api"
+                    # The class name is in component_class (e.g., "AgentQL")
+                    module_parts = component_module.split(".")
+                    module_name = ".".join(module_parts[:-1]) if len(module_parts) > 1 else component_module
+                    # Try to import the module
+                    component_mod = __import__(component_module, fromlist=[component_class])
+                    # Get the class from the module using component_class name
+                    component_cls = getattr(component_mod, component_class)
+                    
+                    if not isinstance(component_cls, type):
+                        # If that didn't work, try getting from the last part of module path
+                        last_part = module_parts[-1]
+                        if hasattr(component_mod, last_part):
+                            potential_cls = getattr(component_mod, last_part)
+                            if isinstance(potential_cls, type):
+                                component_cls = potential_cls
+                    
+                    # Create a temporary instance to get tool_mode inputs and extract default parameters
+                    base_args = self.get_base_args() if hasattr(self, "get_base_args") else {}
+                    temp_component = component_cls(**base_args)
+                    tool_mode_inputs = [inp for inp in temp_component.inputs if getattr(inp, "tool_mode", False)]
+                    
+                    # Only extract default parameters if component_state doesn't already have parameters from backend
+                    # The backend should have serialized all parameters including api_key
+                    existing_params = component_state.get("parameters", {}) if component_state else {}
+                    if not existing_params:
+                        print(f"[AGENT] WARNING: component_state has no parameters for '{tool_name}' - backend should have included them!", flush=True)
+                        # Fallback: try to extract from component inputs (but this shouldn't be necessary)
+                        default_parameters = {}
+                        for inp in temp_component.inputs:
+                            if not getattr(inp, "tool_mode", False):
+                                param_value = None
+                                # Try to get from component's current value
+                                if hasattr(temp_component, inp.name):
+                                    param_value = getattr(temp_component, inp.name)
+                                
+                                # If still None, try default value
+                                if param_value is None:
+                                    if hasattr(inp, "value") and inp.value is not None:
+                                        param_value = inp.value
+                                    elif hasattr(inp, "default") and inp.default is not None:
+                                        param_value = inp.default
+                                
+                                if param_value is not None:
+                                    default_parameters[inp.name] = param_value
+                        
+                        # Update component_state with default parameters if we found any
+                        if default_parameters and component_state:
+                            component_state["parameters"] = default_parameters
+                            metadata["_component_state"] = component_state
+                            print(f"[AGENT] Extracted {len(default_parameters)} fallback parameters: {list(default_parameters.keys())}", flush=True)
+                    else:
+                        print(f"[AGENT] Using parameters from backend for '{tool_name}': {list(existing_params.keys())}", flush=True)
+                    
+                    if tool_mode_inputs:
+                        from lfx.io.schema import create_input_schema
+                        args_schema = create_input_schema(tool_mode_inputs)
+                        print(f"[AGENT] Created args_schema for '{tool_name}' with {len(tool_mode_inputs)} tool_mode inputs: {[inp.name for inp in tool_mode_inputs]}", flush=True)
+            except Exception as exc:
+                print(f"[AGENT] Failed to create args_schema for '{tool_name}': {exc}", flush=True)
+                import traceback
+                print(f"[AGENT] Traceback: {traceback.format_exc()}", flush=True)
+                logger.debug(f"Failed to create args_schema for tool '{tool_name}': {exc}", exc_info=True)
+
+        print(f"[AGENT] ✅ Wrapping tool '{tool_name}' for remote execution to node '{node_id}'", flush=True)
+        remote_coroutine = self._build_remote_tool_coroutine(
+            tool=tool,
+            metadata=metadata,
+        )
+        metadata["_remote_proxy"] = True
+
+        return StructuredTool(
+            name=tool.name,
+            description=tool.description,
+            coroutine=remote_coroutine,
+            args_schema=args_schema,
+            handle_tool_error=getattr(tool, "handle_tool_error", True),
+            callbacks=getattr(tool, "callbacks", None),
+            tags=getattr(tool, "tags", None),
+            metadata=metadata,
+        )
+
+    def _build_remote_tool_coroutine(
+        self,
+        *,
+        tool: StructuredTool,
+        metadata: dict[str, Any],
+    ):
+        async def _remote_tool_runner(*args, **kwargs):
+            return await self._invoke_remote_tool(
+                tool_metadata=metadata,
+                args=args,
+                kwargs=kwargs,
+                tool_name=tool.name,
+            )
+
+        return _remote_tool_runner
+
+    async def _invoke_remote_tool(
+        self,
+        *,
+        tool_metadata: dict[str, Any],
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        tool_name: str,
+    ) -> Any:
+        executor_meta = tool_metadata.get("executor_node") or {}
+        api_url = executor_meta.get("api_url")
+        if not api_url:
+            raise ToolException(
+                f"Remote tool '{tool_name}' is missing an executor api_url."
+            )
+
+        method_name = tool_metadata.get("_component_method")
+        if not method_name:
+            raise ToolException(
+                f"Remote tool '{tool_name}' is missing target method metadata."
+            )
+
+        is_async = bool(tool_metadata.get("_component_is_async"))
+
+        component_state = deepcopy(tool_metadata.get("_component_state") or {})
+        if not component_state:
+            raise ToolException(
+                f"Remote tool '{tool_name}' is missing serialized component state."
+            )
+
+        # Log what parameters we have before merging runtime inputs
+        params = component_state.get("parameters", {})
+        print(f"[AGENT] _invoke_remote_tool: component_state has {len(params)} parameters: {list(params.keys())}", flush=True)
+        if not params:
+            print(f"[AGENT] WARNING: component_state['parameters'] is EMPTY for '{tool_name}' - this will cause API key errors!", flush=True)
+            print(f"[AGENT] Full component_state keys: {list(component_state.keys())}", flush=True)
+        else:
+            # Log parameter values - SHOW ACTUAL API KEY FOR AgentQL
+            param_preview = {}
+            for key, value in params.items():
+                if "key" in key.lower() or "secret" in key.lower() or "password" in key.lower():
+                    # PRINT ACTUAL VALUE FOR AgentQL API KEY
+                    if component_state.get("component_class") == "AgentQL" and key == "api_key":
+                        print(f"[AGENT] 🎯 AgentQL API KEY in component_state['parameters']: {repr(value)}", flush=True)
+                        param_preview[key] = f"VALUE={repr(value)}" if value else "MISSING/None"
+                    else:
+                        param_preview[key] = "***" if value else "MISSING/None"
+                else:
+                    param_preview[key] = str(value)[:50] if value is not None else "None"
+            print(f"[AGENT] Parameter values preview: {param_preview}", flush=True)
+
+        stream_topic = component_state.get("stream_topic")
+        if not stream_topic:
+            raise ToolException(
+                f"Remote tool '{tool_name}' is missing stream topic metadata."
+            )
+
+        runtime_inputs = self._coerce_tool_inputs(args, kwargs, tool_metadata)
+        base_inputs = component_state.get("input_values") or {}
+        merged_inputs = {**base_inputs, **runtime_inputs}
+        component_state["input_values"] = merged_inputs or None
+        
+        # Log final state before sending - SHOW AgentQL API KEY
+        final_params = component_state.get("parameters", {})
+        print(f"[AGENT] Sending to remote executor: parameters={list(final_params.keys())}, input_values={list(merged_inputs.keys())}", flush=True)
+        if component_state.get("component_class") == "AgentQL" and "api_key" in final_params:
+            api_key_val = final_params.get("api_key")
+            print(f"[AGENT] 🎯 FINAL AgentQL API KEY being sent to remote executor: {repr(api_key_val)}", flush=True)
+
+        timeout = int(os.getenv("REMOTE_TOOL_EXECUTION_TIMEOUT", "60"))
+        message_id = str(uuid.uuid4())
+        payload = {
+            "component_state": component_state,
+            "method_name": method_name,
+            "is_async": is_async,
+            "timeout": timeout,
+            "message_id": message_id,
+        }
+
+        try:
+            print(
+                f"[AGENT] Proxying tool '{tool_name}' to executor node '{executor_meta.get('node_id') or api_url}' (method={method_name}, async={is_async})",
+                flush=True,
+            )
+            logger.info(
+                "Proxying tool '%s' to executor node '%s' (method=%s, async=%s)",
+                tool_name,
+                executor_meta.get("node_id") or api_url,
+                method_name,
+                is_async,
+            )
+            async with httpx.AsyncClient(timeout=timeout + 10) as client:
+                response = await client.post(
+                    f"{api_url.rstrip('/')}/api/v1/execute",
+                    json=payload,
+                )
+                response.raise_for_status()
+                response_data = response.json()
+        except httpx.HTTPError as exc:
+            raise ToolException(
+                f"Remote executor request failed for tool '{tool_name}': {exc}"
+            ) from exc
+
+        if not response_data.get("success", False):
+            error_msg = response_data.get("error", "Remote executor reported an error.")
+            raise ToolException(f"Tool '{tool_name}' failed remotely: {error_msg}")
+
+        stream_timeout = float(os.getenv("REMOTE_TOOL_STREAM_TIMEOUT", "15"))
+        consumed_messages = await self._consume_stream_messages(
+            topic=stream_topic,
+            timeout=stream_timeout,
+            max_messages=20,
+            message_id=message_id,
+        )
+
+        if consumed_messages:
+            final_payload = consumed_messages[-1]
+            return self._deserialize_remote_result(
+                final_payload.get("result"),
+                final_payload.get("result_type", "Unknown"),
+            )
+
+        if response_data.get("result") is not None:
+            return self._deserialize_remote_result(
+                response_data.get("result"),
+                response_data.get("result_type", "Unknown"),
+            )
+
+        raise ToolException(
+            f"Tool '{tool_name}' executed remotely but no result was published."
+        )
+
+    def _coerce_tool_inputs(
+        self,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Map LangChain tool args into component input values."""
+        if kwargs:
+            return kwargs
+
+        if not args:
+            return {}
+
+        first = args[0]
+        if isinstance(first, dict):
+            return first
+
+        input_keys: list[str] = metadata.get("_tool_input_keys") or []
+        if input_keys:
+            return {input_keys[0]: first}
+        return {"input_value": first}
+
+    @staticmethod
+    async def _consume_stream_messages(
+        topic: str | None,
+        timeout: float = 5.0,
+        max_messages: int = 10,
+        message_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Consume NATS messages for remote tool executions."""
+        if not topic:
+            logger.warning("[NATS] Missing stream topic, cannot consume messages.")
+            return []
+
+        try:
+            import nats
+            from nats.js import JetStreamContext
+        except ImportError:
+            logger.warning("[NATS] nats-py is not installed; skipping stream consumption.")
+            return []
+
+        nc = None
+        messages: list[dict[str, Any]] = []
+        try:
+            nats_url = os.getenv("NATS_URL", "nats://localhost:4222")
+            nc = await nats.connect(nats_url)
+            js: JetStreamContext = nc.jetstream()
+
+            queue: asyncio.Queue = asyncio.Queue()
+
+            async def _message_handler(msg):
+                try:
+                    payload = json.loads(msg.data.decode("utf-8"))
+                except Exception:  # noqa: BLE001
+                    payload = {"raw": msg.data}
+                await queue.put(payload)
+
+            sub = await js.subscribe(subject=topic, cb=_message_handler, durable=False)
+
+            try:
+                while len(messages) < max_messages:
+                    payload = await asyncio.wait_for(queue.get(), timeout=timeout)
+                    if message_id and payload.get("message_id") != message_id:
+                        continue
+                    messages.append(payload)
+                    if message_id:
+                        break
+            except asyncio.TimeoutError:
+                logger.debug("[NATS] Timeout waiting for messages on %s", topic)
+            finally:
+                await sub.unsubscribe()
+
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[NATS] Failed to consume stream %s: %s", topic, exc)
+        finally:
+            if nc and not nc.is_closed:
+                await nc.close()
+
+        return messages
+
+    @staticmethod
+    def _deserialize_remote_result(result: Any, result_type: str) -> Any:
+        """Reconstruct Langflow primitives from serialized executor payloads."""
+        if not isinstance(result, dict):
+            return result
+
+        try:
+            from lfx.schema.message import Message
+            from lfx.schema.data import Data
+
+            if result_type == "Message" or any(
+                key in result for key in ["text", "sender", "category", "timestamp", "session_id"]
+            ):
+                if "timestamp" in result and isinstance(result["timestamp"], str):
+                    timestamp = result["timestamp"].replace("T", " ")
+                    timestamp = timestamp.replace("+00:00", " UTC").replace("Z", " UTC")
+                    result["timestamp"] = timestamp
+
+                data_value = result.get("data")
+                if isinstance(data_value, dict):
+                    return Message(data=data_value, **{k: v for k, v in result.items() if k != "data"})
+                return Message(**result)
+
+            if result_type == "Data" or "data" in result or "text_key" in result:
+                return Data(**result)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Failed to deserialize remote result (%s): %s", result_type, exc)
+
+        if isinstance(result, list):
+            return [AgentComponent._deserialize_remote_result(item, "Unknown") for item in result]
+
+        return {k: AgentComponent._deserialize_remote_result(v, "Unknown") for k, v in result.items()}

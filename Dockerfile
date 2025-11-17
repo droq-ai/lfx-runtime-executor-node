@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Dockerfile for Langflow Executor Node
-# Build from repo root: docker build -f node/Dockerfile -t langflow-executor-node .
-# OR build from node directory: docker build -f Dockerfile -t langflow-executor-node ../
+# Build from repo root: docker build -f nodes/langflow-executor-node/Dockerfile -t langflow-executor-node .
+# OR from droqflow directory: cd droqflow && docker build -f ../nodes/langflow-executor-node/Dockerfile -t langflow-executor-node .
 
 ################################
 # BUILDER STAGE
@@ -28,15 +28,15 @@ ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 
 # Copy Langflow dependency files first (for better caching)
-# These paths work when building from repo root
-COPY app/src/lfx/pyproject.toml /app/src/lfx/pyproject.toml
-COPY app/src/lfx/README.md /app/src/lfx/README.md
+# These paths assume build context includes droqflow directory
+COPY droqflow/app/src/lfx/pyproject.toml /app/src/lfx/pyproject.toml
+COPY droqflow/app/src/lfx/README.md /app/src/lfx/README.md
 
 # Copy executor node dependency files
-COPY node/pyproject.toml /app/node/pyproject.toml
+COPY nodes/langflow-executor-node/pyproject.toml /app/node/pyproject.toml
 
 # Copy Langflow source (needed for installation)
-COPY app/src/lfx/src /app/src/lfx/src
+COPY droqflow/app/src/lfx/src /app/src/lfx/src
 
 # Install Langflow (lfx) package with all dependencies
 # This installs lfx and all its dependencies from pyproject.toml
@@ -47,6 +47,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Install common Langchain integration packages needed by components
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system --no-cache \
+    "langchain-core>=0.3.79,<0.4.0" \
     langchain-anthropic \
     langchain-openai \
     langchain-community \
@@ -69,10 +70,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     python-dotenv
 
 # Copy executor node source
-COPY node/src /app/node/src
+COPY nodes/langflow-executor-node/src /app/node/src
 
 # Copy components.json mapping file
-COPY node/components.json /app/components.json
+COPY nodes/langflow-executor-node/components.json /app/components.json
 
 ################################
 # RUNTIME STAGE

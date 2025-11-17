@@ -227,17 +227,21 @@ class Message(Data):
         # we need to convert them to BaseMessage
         messages = []
         for message in self.prompt.get("kwargs", {}).get("messages", []):
-            match message:
-                case HumanMessage():
-                    messages.append(message)
-                case _ if message.get("type") == "human":
-                    messages.append(HumanMessage(content=message.get("content")))
-                case _ if message.get("type") == "system":
-                    messages.append(SystemMessage(content=message.get("content")))
-                case _ if message.get("type") == "ai":
-                    messages.append(AIMessage(content=message.get("content")))
-                case _ if message.get("type") == "tool":
-                    messages.append(ToolMessage(content=message.get("content")))
+            if isinstance(message, HumanMessage):
+                messages.append(message)
+                continue
+            if not isinstance(message, dict):
+                continue
+            msg_type = message.get("type")
+            content = message.get("content")
+            if msg_type == "human":
+                messages.append(HumanMessage(content=content))
+            elif msg_type == "system":
+                messages.append(SystemMessage(content=content))
+            elif msg_type == "ai":
+                messages.append(AIMessage(content=content))
+            elif msg_type == "tool":
+                messages.append(ToolMessage(content=content))
 
         self.prompt["kwargs"]["messages"] = messages
         return load(self.prompt)
