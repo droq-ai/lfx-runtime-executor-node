@@ -12,11 +12,11 @@ import sys
 import uvicorn
 
 try:
-    from .logger import setup_logging
+    from node.logger import setup_logging
 except ImportError:
     setup_logging = None
 
-from .api import app
+from node.api import app
 
 logger = logging.getLogger(__name__)
 

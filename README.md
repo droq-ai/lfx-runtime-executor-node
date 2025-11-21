@@ -1,8 +1,132 @@
-# Langflow Executor Node
+# DroqFlow Langflow Executor Node
 
-A Droq node that executes Langflow components in isolated environments. This service receives component execution requests from the main Langflow backend and executes them via HTTP API.
+**DroqFlow Langflow Executor Node** provides a unified interface for building, deploying, and managing Langflow workflows — simplifying workflow automation and lifecycle operations with comprehensive AI model integrations and component orchestration.
 
-## Quick Start
+## 🚀 Installation
+
+### Using UV (Recommended)
+
+```bash
+# Install UV
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create and install DroqFlow Langflow Executor
+uv init my-droqflow-project && cd my-droqflow-project
+uv add "droqflow-langflow-executor @ git+ssh://git@github.com/droq-ai/lfx-runtime-executor-node.git@main"
+
+# Verify installation
+uv run executor-node --help
+```
+
+## 🧩 Usage
+
+```python
+import droqflow
+
+yaml_content = """
+workflow:
+  name: langflow-executor-workflow
+  version: "1.0.0"
+  description: A workflow for Langflow component execution
+
+  nodes:
+    - name: langflow-executor
+      type: executor
+      did: did:droq:node:langflow-executor-v1
+      output: streams.droq.langflow-executor.local.public.executor.out
+      source_code:
+        path: "./src"
+        type: "local"
+        docker:
+          type: "file"
+          dockerfile: "./Dockerfile"
+      config:
+        host: "0.0.0.0"
+        port: 8000
+        log_level: "INFO"
+        locality: "local"
+        remote_endpoint: "nats://droq-nats-server:4222"
+
+  streams:
+    sources:
+      - streams.droq.langflow-executor.local.public.executor.out
+
+permissions: []
+"""
+
+builder = droqflow.DroqWorkflowBuilder(yaml_content=yaml_content)
+builder.load_workflow()
+builder.generate_artifacts(output_dir="artifacts")
+```
+
+## 🔧 Configuration
+
+The executor node can be configured using environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HOST` | `0.0.0.0` | Server host address |
+| `PORT` | `8000` | Server port |
+| `LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
+| `RELOAD` | `false` | Enable auto-reload for development |
+
+### Docker Configuration
+
+```yaml
+config:
+  description: "Langflow Executor Node with comprehensive AI model integrations"
+  docker_image: "droq/langflow-executor:v1"
+  host: "0.0.0.0"
+  port: 8000
+  log_level: "INFO"
+  locality: "local"
+  remote_endpoint: "nats://droq-nats-server:4222"
+```
+
+## 📦 Component Categories
+
+### AI Model Providers
+- **Anthropic** - Generate text using Anthropic's Messages API and models
+- **OpenAI** - Generate text using OpenAI models
+- **Google Generative AI** - Google's generative AI models
+- **Azure OpenAI** - Microsoft Azure OpenAI service
+- **NVIDIA** - Generates text using NVIDIA LLMs
+- **Hugging Face** - Hugging Face model endpoints
+- **Cohere** - Cohere language models
+- **Mistral** - Mistral AI models
+- **Ollama** - Local Ollama models
+- And many more...
+
+### Vector Stores
+- **FAISS** - FAISS Vector Store with search capabilities
+- **Chroma** - Chroma vector database
+- **Pinecone** - Pinecone vector database
+- **Weaviate** - Weaviate vector database
+- **Redis** - Redis vector store
+- And many more...
+
+### Data Processing
+- **API Request** - Make HTTP requests using URL or cURL commands
+- **Filter Data** - Filter data based on specified criteria
+- **Combine Text** - Concatenate text sources using delimiters
+- **Type Converter** - Convert between different data types
+- **DataFrame Operations** - Operations on pandas DataFrames
+
+### Logic & Flow Control
+- **If-Else (Conditional Router)** - Route messages based on text comparison
+- **Smart Router (LLM Conditional Router)** - Route messages using LLM categorization
+- **Loop** - Create loops in flow execution
+- **Run Flow** - Execute sub-flows within main flows
+
+### Integrations
+- **GitHub** - GitHub repository operations
+- **Slack** - Slack messaging integration
+- **Google Calendar** - Google Calendar operations
+- **Gmail** - Gmail email operations
+- **Notion** - Notion database and page operations
+- And many more...
+
+## 🚀 Quick Start
 
 ### Local Development
 
@@ -49,15 +173,11 @@ cd /path/to/droqflow
 cd /path/to/droqflow
 docker build -f node/Dockerfile -t langflow-executor-node:latest .
 
-# Option 3: Build from node directory (use parent as context)
-cd /path/to/droqflow/node
-docker build -f Dockerfile -t langflow-executor-node:latest ..
-
 # Run the container
 docker run -p 8000:8000 langflow-executor-node:latest
 ```
 
-## API Endpoints
+## 🌐 API Endpoints
 
 ### POST /api/v1/execute
 
@@ -101,19 +221,12 @@ Health check endpoint.
 
 Service information.
 
-## Environment Variables
-
-- `HOST` - Server host (default: `0.0.0.0`)
-- `PORT` - Server port (default: `8000`)
-- `LOG_LEVEL` - Logging level (default: `INFO`)
-- `RELOAD` - Enable auto-reload for development (default: `false`)
-
-## Architecture
+## 🏗️ Architecture
 
 ```
 Main Langflow Backend
   ↓ HTTP POST /api/v1/execute
-Executor Node (this service)
+Langflow Executor Node (this service)
   ↓ Loads component class dynamically
   ↓ Instantiates component
   ↓ Executes method
@@ -121,30 +234,53 @@ Executor Node (this service)
 Main Langflow Backend
 ```
 
-## Integration with Main Backend
+## 🧪 Development
 
-The main Langflow backend calls this executor node from `Component._get_output_result()` when components need to execute. All components are now routed to the executor by default.
-
-## Docker Build
-
-The Dockerfile is designed to be built from the repository root:
+### Running Tests
 
 ```bash
-# From repo root
-docker build -f node/Dockerfile -t langflow-executor-node:latest .
+# Install development dependencies
+uv sync --dev
+
+# Run tests
+uv run pytest
+
+# Run tests with coverage
+uv run pytest --cov=lfx --cov-report=html
 ```
 
-This allows the Dockerfile to access both:
-- `app/src/lfx/` - Langflow source code
-- `node/` - Executor node source code
+### Code Quality
 
-## Next Steps
+```bash
+# Format code
+uv run black .
 
-1. Test locally with sample component execution
-2. Build Docker image
-3. Deploy executor node service
-4. Configure main backend to use executor node
+# Lint code
+uv run ruff check .
 
-## License
+# Type checking
+uv run mypy lfx/
+```
 
-Apache License 2.0
+## 📚 Documentation
+
+* [Installation Guide](docs/installation.md)
+* [Usage Guide](docs/usage.md)
+* [API Reference](docs/api.md)
+* [Component Development](docs/component-development.md)
+* [Docker Deployment](docs/docker-deployment.md)
+
+## 🤝 Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+
+## 📄 License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+## 🆘 Support
+
+* [Documentation](https://github.com/droq-ai/lfx-runtime-executor-node#readme)
+* [Issue Tracker](https://github.com/droq-ai/lfx-runtime-executor-node/issues)
+* [Discord Community](https://discord.gg/droqai)
+* [Email Support](mailto:support@droq.ai)

@@ -1,23 +1,46 @@
 [project]
-name = "langflow-executor-node"
-version = "0.1.0"
-description = "Langflow Component Executor Node - Executes Langflow components in isolated environments"
+name = "droqflow-langflow-executor"
+version = "1.0.0"
+description = "DroqFlow Langflow Executor Node - Provides a unified interface for building, deploying, and managing Langflow workflows with comprehensive AI model integrations and component orchestration"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "Apache-2.0"}
+license = { text = "Apache-2.0" }
 authors = [
-    {name = "Droq Team", email = "team@droq.ai"}
+    { name = "DroqAI", email = "support@droq.ai" }
 ]
-keywords = ["droq", "langflow", "executor", "component", "workflow"]
+maintainers = [
+    { name = "DroqAI", email = "support@droq.ai" }
+]
+keywords = ["droqflow", "langflow", "executor", "component", "workflow", "ai", "llm", "automation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 
 dependencies = [
+    # Core DroqFlow dependencies from template
+    "pydantic>=2.0.0",
+    "cryptography>=3.4.0",
+    "PyYAML>=6.0.0",
+    "requests>=2.31.0",
+    "nats-py>=2.3.0",
+    "PyNaCl>=1.5.0",
+
+    # FastAPI and server dependencies
     "fastapi>=0.115.13,<1.0.0",      # For HTTP API server
     "uvicorn[standard]>=0.34.3,<1.0.0",  # ASGI server
-    "pydantic>=2.0.0,<3.0.0",       # For request/response validation
     "httpx>=0.24.0,<0.28.0",        # For HTTP client (aligned with OpenAI SDK)
     "structlog>=25.4.0,<26.0.0",    # For structured logging
     "python-dotenv>=1.0.0,<2.0.0",  # For environment variables
-    "nats-py>=2.6.0,<3.0.0",        # For NATS streaming
+
+    # Langflow-specific dependencies
     "chardet==5.2.0",
     "defusedxml==0.7.1",
     "aiofiles>=22.1.0,<24.0.0",     # Needed by ChatInput file handling
@@ -25,6 +48,8 @@ dependencies = [
     "platformdirs>=4.0.0,<6.0.0",   # Required by lfx utilities
     "pillow>=10.0.0,<11.0.0",       # Image support for input components
     "emoji>=2.14.0,<3.0.0",         # Emoji rendering in chat components
+
+    # LangChain dependencies
     "langchain-core>=0.3.79,<0.4.0",  # Pinned for compatibility with Langflow
     "langchain==0.3.23",
     "langchain-anthropic==0.3.14",
@@ -58,26 +83,30 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
     "pytest-asyncio>=0.21.0",
-    "black>=23.0.0",
     "ruff>=0.1.0",
     "mypy>=1.0.0",
+    "black>=23.0.0",
+    "types-requests>=2.31.0",
+    "pyyaml>=6.0.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/droq-ai/lfx-runtime-executor-node"
+Repository = "https://github.com/droq-ai/lfx-runtime-executor-node"
+Documentation = "https://github.com/droq-ai/lfx-runtime-executor-node#readme"
+"Bug Tracker" = "https://github.com/droq-ai/lfx-runtime-executor-node/issues"
+
 [project.scripts]
-executor-node = "node.main:main"
+executor-node = "lfx.main:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.hatchling.build.targets.wheel]
-packages = ["src/node"]
-include = ["src/node/**/*"]
-
-[tool.black]
-line-length = 100
-target-version = ['py311']
+[tool.hatch.build.targets.wheel]
+packages = ["lfx"]
 
 [tool.ruff]
 line-length = 100
@@ -99,4 +128,16 @@ python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
+
+[dependency-groups]
+dev = [
+    "mypy>=1.14.1",
+    "pytest>=8.3.5",
+    "pytest-cov>=5.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pyyaml>=6.0.3",
+    "ruff>=0.14.3",
+    "types-requests>=2.32.0.20241016",
+    "black>=23.0.0",
+]
 

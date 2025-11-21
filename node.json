@@ -1,0 +1,550 @@
+{
+  "did": "did:droq:node:langflow-executor-v1",
+  "publicKey": "A7UIRQ8z+IhNueLbHHQmfSFb/0wAk/vLXq3TxKEVSDM=",
+  "privateKey": "FYkf035Qdpb9plDB4i8xcpYLB63PKJGV42D3kRg5eWU=",
+  "node_type": "executor",
+  "name": "Langflow Executor Node",
+  "description": "Langflow Component Executor Node - Executes Langflow components in isolated environments with comprehensive AI model integrations, data processing capabilities, and workflow orchestration",
+  "version": "1.0.0",
+  "streams": {
+    "subscribe": [],
+    "publish": []
+  },
+  "permissions": {
+    "read": [],
+    "write": []
+  },
+  "dependencies": {
+    "external": [
+      {
+        "type": "nats",
+        "cluster": "local",
+        "stream": "droq.langflow.executor"
+      },
+      {
+        "type": "did-resolver",
+        "endpoint": "https://did.registry.droq.ai"
+      },
+      {
+        "type": "http-api",
+        "endpoint": "http://localhost:8000"
+      }
+    ]
+  },
+  "config": {
+    "description": "Langflow Executor Node provides a unified interface for building, deploying, and managing Langflow workflows with comprehensive component library for AI orchestration",
+    "docker_image": "droq/langflow-executor:v1",
+    "host": "0.0.0.0",
+    "port": 8000,
+    "log_level": "INFO",
+    "locality": "local",
+    "remote_endpoint": "nats://droq-nats-server:4222"
+  },
+  "source_code": {
+    "path": "./src",
+    "type": "local",
+    "docker": {
+      "type": "file",
+      "dockerfile": "./Dockerfile"
+    }
+  },
+  "components": {
+    "agents": {
+      "description": "AI agent components for intelligent task automation and orchestration",
+      "components": [
+        {
+          "name": "Agent",
+          "description": "Define the agent's instructions, then enter a task to complete using tools"
+        },
+        {
+          "name": "Cuga Agent",
+          "description": "Advanced agent component with CUGA architecture"
+        },
+        {
+          "name": "MCP Component",
+          "description": "Model Control Protocol component for agent management"
+        }
+      ]
+    },
+    "ai_models": {
+      "description": "Large language model providers and text generation services",
+      "components": [
+        {
+          "name": "Anthropic",
+          "description": "Generate text using Anthropic's Messages API and models"
+        },
+        {
+          "name": "OpenAI",
+          "description": "Generate text using OpenAI models"
+        },
+        {
+          "name": "Google Generative AI",
+          "description": "Google's generative AI models"
+        },
+        {
+          "name": "Azure OpenAI",
+          "description": "Microsoft Azure OpenAI service"
+        },
+        {
+          "name": "NVIDIA",
+          "description": "Generates text using NVIDIA LLMs"
+        },
+        {
+          "name": "Hugging Face",
+          "description": "Hugging Face model endpoints"
+        },
+        {
+          "name": "Cohere",
+          "description": "Cohere language models"
+        },
+        {
+          "name": "Mistral",
+          "description": "Mistral AI models"
+        },
+        {
+          "name": "Ollama",
+          "description": "Local Ollama models"
+        },
+        {
+          "name": "LM Studio",
+          "description": "LM Studio local models"
+        },
+        {
+          "name": "Perplexity",
+          "description": "Perplexity AI models"
+        },
+        {
+          "name": "DeepSeek",
+          "description": "DeepSeek AI models"
+        },
+        {
+          "name": "SambaNova",
+          "description": "Generate text using Sambanova LLMs"
+        },
+        {
+          "name": "Maritalk",
+          "description": "Maritalk AI models"
+        },
+        {
+          "name": "Novita",
+          "description": "Novita AI models"
+        }
+      ]
+    },
+    "embeddings": {
+      "description": "Text embedding and vector representation models",
+      "components": [
+        {
+          "name": "Text Embedder",
+          "description": "Generate embeddings for a given message using the specified embedding model"
+        },
+        {
+          "name": "NVIDIA Embeddings",
+          "description": "NVIDIA embedding models"
+        },
+        {
+          "name": "Google Generative AI Embeddings",
+          "description": "Google's embedding models"
+        },
+        {
+          "name": "Azure OpenAI Embeddings",
+          "description": "Azure OpenAI embedding service"
+        },
+        {
+          "name": "Cohere Embeddings",
+          "description": "Cohere embedding models"
+        },
+        {
+          "name": "Mistral Embeddings",
+          "description": "Mistral AI embedding models"
+        },
+        {
+          "name": "Ollama Embeddings",
+          "description": "Local Ollama embedding models"
+        },
+        {
+          "name": "LM Studio Embeddings",
+          "description": "LM Studio local embeddings"
+        },
+        {
+          "name": "TwelveLabs Text Embeddings",
+          "description": "Twelve Labs text embedding models"
+        }
+      ]
+    },
+    "vector_stores": {
+      "description": "Vector databases and storage systems for similarity search",
+      "components": [
+        {
+          "name": "FAISS",
+          "description": "FAISS Vector Store with search capabilities"
+        },
+        {
+          "name": "Chroma",
+          "description": "Chroma vector database"
+        },
+        {
+          "name": "Pinecone",
+          "description": "Pinecone vector database"
+        },
+        {
+          "name": "Weaviate",
+          "description": "Weaviate vector database"
+        },
+        {
+          "name": "Qdrant",
+          "description": "Qdrant vector database"
+        },
+        {
+          "name": "Milvus",
+          "description": "Milvus vector database"
+        },
+        {
+          "name": "Redis",
+          "description": "Redis vector store"
+        },
+        {
+          "name": "Supabase",
+          "description": "Supabase vector database"
+        },
+        {
+          "name": "Local DB",
+          "description": "Local Vector Store with search capabilities"
+        },
+        {
+          "name": "PGVector",
+          "description": "PostgreSQL vector extension"
+        },
+        {
+          "name": "MongoDB Atlas",
+          "description": "MongoDB Atlas vector search"
+        },
+        {
+          "name": "ClickHouse",
+          "description": "ClickHouse vector store"
+        },
+        {
+          "name": "Cassandra",
+          "description": "Cassandra vector store"
+        },
+        {
+          "name": "Elasticsearch",
+          "description": "Elasticsearch vector store"
+        },
+        {
+          "name": "OpenSearch",
+          "description": "OpenSearch vector store"
+        }
+      ]
+    },
+    "data_processing": {
+      "description": "Data transformation, filtering, and processing components",
+      "components": [
+        {
+          "name": "Combine Text",
+          "description": "Concatenate two text sources into a single text chunk using a specified delimiter"
+        },
+        {
+          "name": "Filter Data",
+          "description": "Filter data based on specified criteria"
+        },
+        {
+          "name": "Extract Key",
+          "description": "Extract specific keys from data structures"
+        },
+        {
+          "name": "Create Data",
+          "description": "Create structured data objects"
+        },
+        {
+          "name": "Data Operations",
+          "description": "Perform various data transformation operations"
+        },
+        {
+          "name": "Lambda Filter",
+          "description": "Filter data using lambda functions"
+        },
+        {
+          "name": "Type Converter",
+          "description": "Convert between different data types"
+        },
+        {
+          "name": "Parse JSON Data",
+          "description": "Parse and process JSON data"
+        },
+        {
+          "name": "DataFrame Operations",
+          "description": "Operations on pandas DataFrames"
+        },
+        {
+          "name": "DataFrame to Toolset",
+          "description": "Convert DataFrame to tool components"
+        },
+        {
+          "name": "Batch Run",
+          "description": "Run operations in batches"
+        },
+        {
+          "name": "Dynamic Create Data",
+          "description": "Dynamically create data structures"
+        }
+      ]
+    },
+    "logic_flow": {
+      "description": "Logic control and workflow orchestration components",
+      "components": [
+        {
+          "name": "If-Else (Conditional Router)",
+          "description": "Routes an input message to a corresponding output based on text comparison"
+        },
+        {
+          "name": "Smart Router (LLM Conditional Router)",
+          "description": "Routes an input message using LLM-based categorization"
+        },
+        {
+          "name": "Loop",
+          "description": "Create loops in flow execution"
+        },
+        {
+          "name": "Run Flow",
+          "description": "Creates a tool component from a Flow that takes all its inputs and runs it"
+        },
+        {
+          "name": "Sub Flow",
+          "description": "Execute sub-flows within main flows"
+        },
+        {
+          "name": "Pass Message",
+          "description": "Forwards the input message, unchanged"
+        },
+        {
+          "name": "Flow Tool",
+          "description": "Create tools from flow components"
+        },
+        {
+          "name": "Listen",
+          "description": "Listen for events or messages"
+        },
+        {
+          "name": "Notify",
+          "description": "Send notifications"
+        }
+      ]
+    },
+    "utilities": {
+      "description": "Helper and utility components for common operations",
+      "components": [
+        {
+          "name": "Calculator",
+          "description": "Perform basic arithmetic operations on a given expression"
+        },
+        {
+          "name": "Current Date",
+          "description": "Get the current date and time"
+        },
+        {
+          "name": "ID Generator",
+          "description": "Generate unique identifiers"
+        },
+        {
+          "name": "Memory",
+          "description": "Store and retrieve conversation memory"
+        },
+        {
+          "name": "Store Message",
+          "description": "Store messages for later retrieval"
+        },
+        {
+          "name": "Create List",
+          "description": "Create lists from inputs"
+        },
+        {
+          "name": "Output Parser",
+          "description": "Parse model outputs"
+        }
+      ]
+    },
+    "data_sources": {
+      "description": "Data ingestion and external service integrations",
+      "components": [
+        {
+          "name": "API Request",
+          "description": "Make HTTP requests using URL or cURL commands"
+        },
+        {
+          "name": "Web Search",
+          "description": "Search the web for information"
+        },
+        {
+          "name": "News Search",
+          "description": "Search news articles and feeds"
+        },
+        {
+          "name": "SQL Executor",
+          "description": "Execute SQL queries on databases"
+        },
+        {
+          "name": "CSV to Data",
+          "description": "Convert CSV files to structured data"
+        },
+        {
+          "name": "JSON to Data",
+          "description": "Convert JSON to structured data format"
+        },
+        {
+          "name": "Save File",
+          "description": "Save data to files"
+        },
+        {
+          "name": "Mock Data",
+          "description": "Generate mock data for testing"
+        }
+      ]
+    },
+    "input_output": {
+      "description": "Input/output handling for user interactions",
+      "components": [
+        {
+          "name": "Chat Input",
+          "description": "Handle chat-based user input"
+        },
+        {
+          "name": "Chat Output",
+          "description": "Handle chat-based output responses"
+        },
+        {
+          "name": "Text Input",
+          "description": "Handle text-based user input"
+        },
+        {
+          "name": "Text Output",
+          "description": "Handle text-based output responses"
+        }
+      ]
+    },
+    "specialized_services": {
+      "description": "Specialized service integrations and advanced components",
+      "components": [
+        {
+          "name": "AgentQL",
+          "description": "Extracts structured data from a web page using an AgentQL query or a Natural Language description"
+        },
+        {
+          "name": "AssemblyAI",
+          "description": "Speech-to-text and audio processing services"
+        },
+        {
+          "name": "Firecrawl",
+          "description": "Web crawling and data extraction"
+        },
+        {
+          "name": "Exa Search",
+          "description": "Advanced search capabilities"
+        },
+        {
+          "name": "Wikipedia",
+          "description": "Wikipedia article retrieval"
+        },
+        {
+          "name": "YouTube",
+          "description": "YouTube video data extraction and processing"
+        },
+        {
+          "name": "Git",
+          "description": "Git repository operations"
+        },
+        {
+          "name": "Notion",
+          "description": "Notion database and page operations"
+        }
+      ]
+    },
+    "integrations": {
+      "description": "Third-party service integrations via Composio",
+      "components": [
+        {
+          "name": "Airtable",
+          "description": "Airtable database operations"
+        },
+        {
+          "name": "Asana",
+          "description": "Asana project management integration"
+        },
+        {
+          "name": "Calendly",
+          "description": "Calendly scheduling operations"
+        },
+        {
+          "name": "Discord",
+          "description": "Discord bot and messaging integration"
+        },
+        {
+          "name": "Figma",
+          "description": "Figma design tool integration"
+        },
+        {
+          "name": "GitHub",
+          "description": "GitHub repository operations"
+        },
+        {
+          "name": "Gmail",
+          "description": "Gmail email operations"
+        },
+        {
+          "name": "Google Calendar",
+          "description": "Google Calendar operations"
+        },
+        {
+          "name": "Google Docs",
+          "description": "Google Docs document operations"
+        },
+        {
+          "name": "Google Sheets",
+          "description": "Google Sheets operations"
+        },
+        {
+          "name": "Jira",
+          "description": "Jira project management integration"
+        },
+        {
+          "name": "Linear",
+          "description": "Linear project management integration"
+        },
+        {
+          "name": "Slack",
+          "description": "Slack messaging integration"
+        },
+        {
+          "name": "Todoist",
+          "description": "Todoist task management integration"
+        }
+      ]
+    },
+    "custom": {
+      "description": "Custom and advanced component development",
+      "components": [
+        {
+          "name": "Custom Component",
+          "description": "Base for creating custom components"
+        },
+        {
+          "name": "Python Function",
+          "description": "Define and execute a Python function that returns a Data object or a Message"
+        }
+      ]
+    },
+    "knowledge_management": {
+      "description": "Knowledge base and document management components",
+      "components": [
+        {
+          "name": "Knowledge Base Ingestion",
+          "description": "Ingest documents into knowledge bases"
+        },
+        {
+          "name": "Knowledge Base Retrieval",
+          "description": "Retrieve information from knowledge bases"
+        }
+      ]
+    }
+  }
+}
