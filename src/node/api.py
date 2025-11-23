@@ -81,6 +81,7 @@ class ComponentState(BaseModel):
     display_name: str | None = None
     component_id: str | None = None
     stream_topic: str | None = None  # NATS stream topic for publishing results
+    attributes: dict[str, Any] | None = None  # Serialized _attributes (loop state, etc.)
 
 
 class ExecutionRequest(BaseModel):
@@ -102,6 +103,7 @@ class ExecutionResponse(BaseModel):
     execution_time: float
     error: str | None = None
     message_id: str | None = None  # Unique ID for the published NATS message
+    updated_attributes: dict[str, Any] | None = None
 
 
 async def load_component_class(
@@ -560,6 +562,25 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
         Execution response with result or error
     """
     start_time = time.time()
+    try:
+        import json
+
+        payload_preview = json.dumps(
+            {
+                "component_class": request.component_state.component_class,
+                "method": request.method_name,
+                "is_async": request.is_async,
+                "timeout": request.timeout,
+                "stream_topic": request.component_state.stream_topic,
+                "parameters": request.component_state.parameters,
+                "input_values": request.component_state.input_values,
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+    except Exception as preview_err:
+        payload_preview = f"<unserializable payload: {preview_err}>"
+    print(f"[EXECUTOR] Incoming execution request: {payload_preview}", flush=True)
 
     try:
         # Log what we received
@@ -646,6 +667,37 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
 
         component = component_class(**component_params)
 
+        # Restore serialized _attributes/state (e.g., LoopComponent.__loop_state)
+        restored_attributes = {}
+        if request.component_state.attributes:
+            try:
+                deserialized_attrs = deserialize_input_value(request.component_state.attributes)
+                if isinstance(deserialized_attrs, dict):
+                    restored_attributes = deserialized_attrs
+            except Exception as attr_err:  # noqa: BLE001
+                logger.warning(
+                    "Failed to deserialize component attributes for %s: %s",
+                    request.component_state.component_class,
+                    attr_err,
+                )
+        if restored_attributes:
+            try:
+                if not hasattr(component, "_attributes") or component._attributes is None:
+                    component._attributes = {}
+                component._attributes.update(restored_attributes)
+                logger.info(
+                    "Restored %d attribute(s) onto %s (keys: %s)",
+                    len(restored_attributes),
+                    request.component_state.component_class,
+                    list(restored_attributes.keys()),
+                )
+            except Exception as attr_err:  # noqa: BLE001
+                logger.warning(
+                    "Failed to restore _attributes on %s: %s",
+                    request.component_state.component_class,
+                    attr_err,
+                )
+
         # Ensure runtime inputs also populate component attributes for template rendering
         if deserialized_inputs:
             try:
@@ -682,8 +734,15 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
 
         execution_time = time.time() - start_time
 
-        # Serialize result
+        # Serialize result and capture updated component attributes (if any)
         serialized_result = serialize_result(result)
+        updated_attributes = None
+        if hasattr(component, "_attributes"):
+            try:
+                updated_attributes = serialize_result(getattr(component, "_attributes", {}))
+            except Exception as attr_err:  # noqa: BLE001
+                logger.warning("Failed to serialize component attributes: %s", attr_err)
+                updated_attributes = None
 
         logger.info(
             f"Method {request.method_name} completed successfully "
@@ -736,6 +795,7 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
             result_type=type(result).__name__,
             execution_time=execution_time,
             message_id=message_id,  # Return message ID (from request or generated) so backend can match it
+            updated_attributes=updated_attributes,
         )
 
     except asyncio.TimeoutError:

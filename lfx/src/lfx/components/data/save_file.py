@@ -333,6 +333,26 @@ class SaveToFileComponent(Component):
 
     def _save_data(self, data: Data, path: Path, fmt: str) -> str:
         """Save a Data object to the specified file format."""
+        # CRITICAL: Skip if content is empty (don't fail, just skip writing)
+        # Check if Data object has meaningful content
+        text_content = getattr(data, "text", None) or (data.data.get("text") if isinstance(data.data, dict) else None)
+        data_dict = data.data if isinstance(data.data, dict) else {}
+        
+        # Check if text is empty or only whitespace
+        is_text_empty = not text_content or (isinstance(text_content, str) and text_content.strip() == "")
+        
+        # Check if data dict is empty or only contains empty values
+        is_data_empty = not data_dict or all(
+            not v or (isinstance(v, str) and v.strip() == "") 
+            for v in data_dict.values() 
+            if v is not None
+        )
+        
+        if is_text_empty and is_data_empty:
+            print(f"[SaveFile] SKIP: Data content is empty, skipping write. data.data={repr(data.data)}, text={repr(text_content)}", flush=True)
+            logger.info(f"[SaveFile] Skipping write to '{path}' - content is empty")
+            return f"Skipped writing empty content to '{path}'"
+        
         if fmt == "csv":
             pd.DataFrame(data.data).to_csv(path, index=False)
         elif fmt == "excel":
@@ -362,12 +382,34 @@ class SaveToFileComponent(Component):
         else:
             content = str(message.text)
 
+        # CRITICAL: Skip if content is empty (don't fail, just skip writing)
+        # This prevents writing empty files which indicates a problem in the workflow
+        if not content or content.strip() == "":
+            print(f"[SaveFile] SKIP: Content is empty, skipping write. message.text={repr(message.text)}, content={repr(content)}", flush=True)
+            logger.info(f"[SaveFile] Skipping write to '{path}' - content is empty")
+            return f"Skipped writing empty content to '{path}'"
+
         if fmt == "txt":
-            path.write_text(content, encoding="utf-8")
+            # Append mode: if file exists, append with newline; otherwise create new
+            if path.exists():
+                with path.open("a", encoding="utf-8") as f:
+                    f.write(f"{content}\n")
+            else:
+                path.write_text(content, encoding="utf-8")
         elif fmt == "json":
-            path.write_text(json.dumps({"message": content}, indent=2), encoding="utf-8")
+            # For JSON, append as a new line (JSONL format) if file exists
+            if path.exists():
+                with path.open("a", encoding="utf-8") as f:
+                    f.write(f"{json.dumps({'message': content})}\n")
+            else:
+                path.write_text(json.dumps({"message": content}, indent=2), encoding="utf-8")
         elif fmt == "markdown":
-            path.write_text(f"**Message:**\n\n{content}", encoding="utf-8")
+            # Append mode for markdown
+            if path.exists():
+                with path.open("a", encoding="utf-8") as f:
+                    f.write(f"\n**Message:**\n\n{content}\n")
+            else:
+                path.write_text(f"**Message:**\n\n{content}", encoding="utf-8")
         else:
             msg = f"Unsupported Message format: {fmt}"
             raise ValueError(msg)

@@ -281,34 +281,34 @@ class ComponentToolkit:
             event_manager = self.component.get_event_manager()
             if asyncio.iscoroutinefunction(output_method):
                 structured_tool = StructuredTool(
-                    name=formatted_name,
-                    description=build_description(self.component),
-                    coroutine=_build_output_async_function(self.component, output_method, event_manager),
-                    args_schema=args_schema,
-                    handle_tool_error=True,
-                    callbacks=callbacks,
-                    tags=[formatted_name],
-                    metadata={
-                        "display_name": formatted_name,
-                        "display_description": build_description(self.component),
-                    },
-                )
+                        name=formatted_name,
+                        description=build_description(self.component),
+                        coroutine=_build_output_async_function(self.component, output_method, event_manager),
+                        args_schema=args_schema,
+                        handle_tool_error=True,
+                        callbacks=callbacks,
+                        tags=[formatted_name],
+                        metadata={
+                            "display_name": formatted_name,
+                            "display_description": build_description(self.component),
+                        },
+                    )
                 tools.append(structured_tool)
                 self._attach_runtime_metadata(structured_tool, output, is_async=True, args_schema=args_schema)
             else:
                 structured_tool = StructuredTool(
-                    name=formatted_name,
-                    description=build_description(self.component),
-                    func=_build_output_function(self.component, output_method, event_manager),
-                    args_schema=args_schema,
-                    handle_tool_error=True,
-                    callbacks=callbacks,
-                    tags=[formatted_name],
-                    metadata={
-                        "display_name": formatted_name,
-                        "display_description": build_description(self.component),
-                    },
-                )
+                        name=formatted_name,
+                        description=build_description(self.component),
+                        func=_build_output_function(self.component, output_method, event_manager),
+                        args_schema=args_schema,
+                        handle_tool_error=True,
+                        callbacks=callbacks,
+                        tags=[formatted_name],
+                        metadata={
+                            "display_name": formatted_name,
+                            "display_description": build_description(self.component),
+                        },
+                    )
                 tools.append(structured_tool)
                 self._attach_runtime_metadata(structured_tool, output, is_async=False, args_schema=args_schema)
         if len(tools) == 1 and (tool_name or tool_description):
