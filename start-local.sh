@@ -72,6 +72,6 @@ export PORT="${PORT:-8000}"
 export RELOAD="${RELOAD:-true}"
 export LOG_LEVEL="${LOG_LEVEL:-info}"
 
-# Run directly with python (dependencies should already be installed)
-python -m node.main
+# Run the lfx main module directly with Python (dependencies should already be installed)
+python -c "import sys; sys.path.insert(0, 'src'); from lfx.main import main; main()"
 
