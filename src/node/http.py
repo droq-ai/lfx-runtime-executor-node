@@ -86,7 +86,9 @@ class HTTPClient:
         request_headers = {**self.default_headers, **(headers or {})}
 
         try:
-            async with self.session.get(url, params=params, headers=request_headers) as response:
+            async with self.session.get(
+                url, params=params, headers=request_headers
+            ) as response:
                 response.raise_for_status()
                 return await response.json()
         except aiohttp.ClientError as e:
@@ -126,7 +128,9 @@ class HTTPClient:
                     response.raise_for_status()
                     return await response.json()
             else:
-                async with self.session.post(url, data=data, headers=request_headers) as response:
+                async with self.session.post(
+                    url, data=data, headers=request_headers
+                ) as response:
                     response.raise_for_status()
                     return await response.json()
         except aiohttp.ClientError as e:
@@ -166,7 +170,9 @@ class HTTPClient:
                     response.raise_for_status()
                     return await response.json()
             else:
-                async with self.session.put(url, data=data, headers=request_headers) as response:
+                async with self.session.put(
+                    url, data=data, headers=request_headers
+                ) as response:
                     response.raise_for_status()
                     return await response.json()
         except aiohttp.ClientError as e:

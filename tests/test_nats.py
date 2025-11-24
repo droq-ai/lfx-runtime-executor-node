@@ -89,7 +89,9 @@ async def test_nats_subscribe(nats_url):
 
         # Subscribe without queue (simpler for testing)
         # Note: subscribe() runs indefinitely, so we'll use a timeout
-        subscribe_task = asyncio.create_task(client.subscribe("test-sub", message_handler))
+        subscribe_task = asyncio.create_task(
+            client.subscribe("test-sub", message_handler)
+        )
 
         # Give subscription time to set up
         await asyncio.sleep(0.5)
@@ -114,7 +116,9 @@ async def test_nats_subscribe(nats_url):
         await client.close()
 
         # Check that message was received
-        assert len(received_messages) > 0, f"No messages were received. Stream: {stream_name}"
+        assert (
+            len(received_messages) > 0
+        ), f"No messages were received. Stream: {stream_name}"
         # Check that our test message is in the received messages
         test_ids = [msg.get("test_id") for msg in received_messages]
         assert (

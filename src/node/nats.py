@@ -57,11 +57,13 @@ class NATSClient:
             stream_info = await self.js.stream_info(self.stream_name)
             logger.info(f"Stream '{self.stream_name}' already exists")
             logger.info(f"Stream subjects: {stream_info.config.subjects}")
-            
+
             # Check if 'droq.local.public.>' is in subjects, if not, update stream
             required_subject = "droq.local.public.>"
             if required_subject not in stream_info.config.subjects:
-                logger.warning(f"Stream '{self.stream_name}' missing required subject '{required_subject}', updating...")
+                logger.warning(
+                    f"Stream '{self.stream_name}' missing required subject '{required_subject}', updating..."
+                )
                 subjects = list(stream_info.config.subjects) + [required_subject]
                 await self.js.update_stream(
                     StreamConfig(
@@ -71,7 +73,9 @@ class NATSClient:
                         storage=stream_info.config.storage,
                     )
                 )
-                logger.info(f"Stream '{self.stream_name}' updated with subject '{required_subject}'")
+                logger.info(
+                    f"Stream '{self.stream_name}' updated with subject '{required_subject}'"
+                )
         except Exception as e:
             # Stream doesn't exist, create it
             logger.info(f"Creating stream '{self.stream_name}' (error: {e})")
@@ -80,13 +84,15 @@ class NATSClient:
                     name=self.stream_name,
                     subjects=[
                         f"{self.stream_name}.>",  # Backward compatibility
-                        "droq.local.public.>",    # Full topic path format
+                        "droq.local.public.>",  # Full topic path format
                     ],
                     retention=RetentionPolicy.WORK_QUEUE,
                     storage=StorageType.FILE,
                 )
             )
-            logger.info(f"Stream '{self.stream_name}' created with subjects: ['{self.stream_name}.>', 'droq.local.public.>']")
+            logger.info(
+                f"Stream '{self.stream_name}' created with subjects: ['{self.stream_name}.>', 'droq.local.public.>']"
+            )
 
     async def publish(
         self,
@@ -116,8 +122,10 @@ class NATSClient:
             # Encode data as JSON
             payload = json.dumps(data).encode()
             payload_size = len(payload)
-            
-            logger.info(f"[NATS] Publishing to subject: {full_subject}, payload size: {payload_size} bytes")
+
+            logger.info(
+                f"[NATS] Publishing to subject: {full_subject}, payload size: {payload_size} bytes"
+            )
 
             # Publish with headers if provided
             if headers:
@@ -125,7 +133,9 @@ class NATSClient:
             else:
                 ack = await self.js.publish(full_subject, payload)
 
-            logger.info(f"[NATS] ✅ Published message to {full_subject} (seq: {ack.seq if hasattr(ack, 'seq') else 'N/A'})")
+            logger.info(
+                f"[NATS] ✅ Published message to {full_subject} (seq: {ack.seq if hasattr(ack, 'seq') else 'N/A'})"
+            )
         except Exception as e:
             logger.error(f"Failed to publish message: {e}")
             raise

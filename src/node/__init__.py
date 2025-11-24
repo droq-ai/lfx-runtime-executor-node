@@ -5,4 +5,4 @@ __version__ = "0.1.0"
 # Export main components
 from .main import main
 
-__all__ = ["main", "run_node", "shutdown_event"]
+__all__ = ["main"]
