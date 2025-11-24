@@ -89,7 +89,6 @@ class LoopComponent(Component):
         self._persist_state()
         if hasattr(self, "_data_cache"):
             delattr(self, "_data_cache")
-        print(f"[LoopExecutor] _reset_state: reset complete, new state={state}", flush=True)
     
     def _is_stopped(self) -> bool:
         """Check if the loop has been stopped."""
@@ -219,29 +218,17 @@ class LoopComponent(Component):
     def initialize_data(self) -> None:
         state = self._get_state()
         raw = getattr(self, "data", None)
-        print(f"[LoopExecutor] raw data input component={self._id} type={type(raw).__name__} value={raw}", flush=True)
         data_list = self._get_data_list()
         preview = data_list[0].data if data_list else None
-        current_index = self._get_index()
-        is_stopped = self._is_stopped()
-        
-        # CRITICAL: Reset state ONLY if:
-        # 1. Index is beyond bounds (corrupted state)
-        # DO NOT reset if stopped=True (loop ended) - backend will handle stopping
-        # DO NOT reset if index == length (reached end) - that's valid state, just return empty Data
-        # The reset when stopped=True should only happen on the BACKEND side when starting a new run
+        current_index = self._get_index()        
+        # Reset state ONLY if:
+        #   1. Index is beyond bounds (corrupted state)
+        #   2. Do NOT reset if stopped=True (loop ended) - backend will handle stopping
+        #   3. Do NOT reset if index == length (reached end) - that's valid state, just return empty Data
+        #   4. The reset when stopped=True should only happen on the BACKEND side when starting a new run
         if current_index > len(data_list):
-            print(
-                f"[LoopExecutor] initialize_data: index={current_index} > length={len(data_list)}, resetting state (corrupted)",
-                flush=True,
-            )
             self._reset_state()
             current_index = 0
-        
-        print(
-            f"[LoopExecutor] initialize_data component={self._id} items={len(data_list)} index={current_index} preview={preview}",
-            flush=True,
-        )
 
     def evaluate_stop_loop(self) -> bool:
         data_length = len(self._get_data_list())
@@ -254,12 +241,8 @@ class LoopComponent(Component):
         """
         self.initialize_data()
         
-        # CRITICAL: If already stopped, return immediately without processing
+        # If already stopped, return immediately without processing
         if self._is_stopped():
-            print(
-                f"[LoopExecutor] item_output: loop is already stopped, returning empty Data immediately",
-                flush=True,
-            )
             return Data(text="")
         
         data_list = self._get_data_list()
@@ -267,18 +250,9 @@ class LoopComponent(Component):
         
         # Log state for debugging
         state = self._get_state()
-        print(
-            f"[LoopExecutor] item_output: state={state}, current_index={current_index}, data_length={len(data_list)}",
-            flush=True,
-        )
-
         # Executor is stateless - just execute what backend asks
         # Backend should check bounds before calling executor
         if current_index >= len(data_list):
-            print(
-                f"[LoopExecutor] item_output: index={current_index} >= length={len(data_list)}, returning empty Data (STOPPED)",
-                flush=True,
-            )
             # Mark as stopped so backend knows
             self._set_stopped(True)
             return Data(text="")
@@ -286,23 +260,10 @@ class LoopComponent(Component):
         try:
             current_item = data_list[current_index]
         except IndexError:
-            print(
-                f"[LoopExecutor] item_output IndexError at index={current_index}, returning empty Data",
-                flush=True,
-            )
             self._set_stopped(True)
             return Data(text="")
         
         current_item = self._coerce_to_data(current_item)
-        print(
-            f"[LoopExecutor] item_output index={current_index}/{len(data_list)-1} -> "
-            f"data={current_item.data} text_key={current_item.text_key} text={getattr(current_item, 'text', None)}",
-            flush=True,
-        )
-        print(
-            f"[LoopExecutor] PUBLISHING item {current_index}: {current_item.data}",
-            flush=True,
-        )
 
         # Increment index and add to aggregated for next iteration
         serialized = self._get_aggregated()
@@ -310,10 +271,6 @@ class LoopComponent(Component):
         self._set_aggregated(serialized)
         new_index = current_index + 1
         self._set_index(new_index)
-        print(
-            f"[LoopExecutor] item_output: incremented index from {current_index} to {new_index}, aggregated_count={len(serialized)}",
-            flush=True,
-        )
         return current_item
 
     def done_output(self) -> DataFrame:

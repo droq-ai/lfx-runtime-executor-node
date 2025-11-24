@@ -563,26 +563,6 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
     """
     start_time = time.time()
     try:
-        import json
-
-        payload_preview = json.dumps(
-            {
-                "component_class": request.component_state.component_class,
-                "method": request.method_name,
-                "is_async": request.is_async,
-                "timeout": request.timeout,
-                "stream_topic": request.component_state.stream_topic,
-                "parameters": request.component_state.parameters,
-                "input_values": request.component_state.input_values,
-            },
-            ensure_ascii=False,
-            default=str,
-        )
-    except Exception as preview_err:
-        payload_preview = f"<unserializable payload: {preview_err}>"
-    print(f"[EXECUTOR] Incoming execution request: {payload_preview}", flush=True)
-
-    try:
         # Log what we received
         stream_topic_value = request.component_state.stream_topic
         log_msg = (
