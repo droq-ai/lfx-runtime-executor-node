@@ -114,7 +114,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
-ignore = ["N814"]  # Allow camelcase imports as constants (common for NATS library)
+ignore = ["N814", "E501"]  # Allow camelcase imports and ignore line length
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

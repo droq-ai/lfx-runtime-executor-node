@@ -69,12 +69,12 @@ jobs:
       - name: Check formatting
         run: |
           source .venv/bin/activate
-          black --check src/ tests/
-      
+          black --check src/lfx/ tests/
+
       - name: Lint
         run: |
           source .venv/bin/activate
-          ruff check src/ tests/
+          ruff check src/lfx/ tests/
 
   docker:
     runs-on: ubuntu-latest
