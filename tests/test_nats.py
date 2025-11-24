@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 async def test_nats_client_import():
     """Test that NATS client can be imported."""
     try:
-        from node.nats import NATSClient
+        from lfx.nats import NATSClient
 
         assert NATSClient is not None
     except ImportError:
@@ -24,7 +24,7 @@ async def test_nats_client_import():
 async def test_nats_client_initialization():
     """Test NATS client initialization."""
     try:
-        from node.nats import NATSClient
+        from lfx.nats import NATSClient
 
         client = NATSClient(nats_url="nats://localhost:4222", stream_name="test-stream")
         assert client.nats_url == "nats://localhost:4222"
@@ -37,9 +37,14 @@ async def test_nats_client_initialization():
 async def test_nats_connect(nats_url):
     """Test connecting to NATS server."""
     try:
-        from node.nats import NATSClient
+        import uuid
 
-        client = NATSClient(nats_url=nats_url, stream_name="droq-stream")
+        from lfx.nats import NATSClient
+
+        # Use unique stream name to avoid conflicts
+        unique_id = str(uuid.uuid4())[:8]
+        stream_name = f"test-connect-{unique_id}"
+        client = NATSClient(nats_url=nats_url, stream_name=stream_name)
         await client.connect()
 
         assert client.nc is not None
@@ -54,9 +59,14 @@ async def test_nats_connect(nats_url):
 async def test_nats_publish(nats_url):
     """Test publishing to NATS."""
     try:
-        from node.nats import NATSClient
+        import uuid
 
-        client = NATSClient(nats_url=nats_url, stream_name="droq-stream")
+        from lfx.nats import NATSClient
+
+        # Use unique stream name to avoid conflicts
+        unique_id = str(uuid.uuid4())[:8]
+        stream_name = f"test-publish-{unique_id}"
+        client = NATSClient(nats_url=nats_url, stream_name=stream_name)
         await client.connect()
 
         # Publish a test message
@@ -72,11 +82,13 @@ async def test_nats_subscribe(nats_url):
     """Test subscribing to NATS messages."""
     try:
         import asyncio
-        import time
+        import uuid
 
-        from node.nats import NATSClient
+        from lfx.nats import NATSClient
 
-        stream_name = f"test-subscribe-{int(time.time())}"
+        # Use UUID to ensure unique stream names and avoid subject conflicts
+        unique_id = str(uuid.uuid4())[:8]
+        stream_name = f"test-subscribe-{unique_id}"
         client = NATSClient(nats_url=nats_url, stream_name=stream_name)
         await client.connect()
 
@@ -87,18 +99,19 @@ async def test_nats_subscribe(nats_url):
             received_messages.append(data)
             message_received.set()
 
+        # Use a unique subject to avoid conflicts
+        subject = f"test-sub-{unique_id}"
+
         # Subscribe without queue (simpler for testing)
         # Note: subscribe() runs indefinitely, so we'll use a timeout
-        subscribe_task = asyncio.create_task(
-            client.subscribe("test-sub", message_handler)
-        )
+        subscribe_task = asyncio.create_task(client.subscribe(subject, message_handler))
 
         # Give subscription time to set up
         await asyncio.sleep(0.5)
 
         # Publish a message with unique content
-        test_message = {"message": "hello", "test_id": "unique-test-123"}
-        await client.publish("test-sub", test_message)
+        test_message = {"message": "hello", "test_id": f"unique-test-{unique_id}"}
+        await client.publish(subject, test_message)
 
         # Wait for message to be received (with timeout)
         try:
@@ -122,7 +135,7 @@ async def test_nats_subscribe(nats_url):
         # Check that our test message is in the received messages
         test_ids = [msg.get("test_id") for msg in received_messages]
         assert (
-            "unique-test-123" in test_ids
+            f"unique-test-{unique_id}" in test_ids
         ), f"Test message not found. Received: {received_messages}"
     except ImportError:
         pytest.skip("nats-py not installed")
@@ -135,7 +148,7 @@ async def test_nats_subscribe(nats_url):
 async def test_http_client_import():
     """Test that HTTP client can be imported."""
     try:
-        from node.http import HTTPClient
+        from lfx.http import HTTPClient
 
         assert HTTPClient is not None
     except ImportError:
@@ -146,7 +159,7 @@ async def test_http_client_import():
 async def test_http_client_initialization():
     """Test HTTP client initialization."""
     try:
-        from node.http import HTTPClient
+        from lfx.http import HTTPClient
 
         client = HTTPClient(base_url="https://api.example.com", timeout=30)
         assert client.base_url == "https://api.example.com"

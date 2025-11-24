@@ -8,12 +8,12 @@ import pytest
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from node.main import main
+from lfx.main import main
 
 
 def test_imports():
     """Test that the module can be imported."""
-    from node import main
+    from lfx import main
 
     assert main is not None
 

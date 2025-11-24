@@ -79,19 +79,25 @@ class NATSClient:
         except Exception as e:
             # Stream doesn't exist, create it
             logger.info(f"Creating stream '{self.stream_name}' (error: {e})")
+            # For test streams (containing "test-"), only use stream-specific subjects
+            if "test-" in self.stream_name.lower():
+                subjects = [f"{self.stream_name}.>"]
+            else:
+                subjects = [
+                    f"{self.stream_name}.>",  # Backward compatibility
+                    "droq.local.public.>",  # Full topic path format
+                ]
+
             await self.js.add_stream(
                 StreamConfig(
                     name=self.stream_name,
-                    subjects=[
-                        f"{self.stream_name}.>",  # Backward compatibility
-                        "droq.local.public.>",  # Full topic path format
-                    ],
+                    subjects=subjects,
                     retention=RetentionPolicy.WORK_QUEUE,
                     storage=StorageType.FILE,
                 )
             )
             logger.info(
-                f"Stream '{self.stream_name}' created with subjects: ['{self.stream_name}.>', 'droq.local.public.>']"
+                f"Stream '{self.stream_name}' created with subjects: {subjects}"
             )
 
     async def publish(
