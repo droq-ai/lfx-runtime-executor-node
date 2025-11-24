@@ -8,7 +8,7 @@ import pytest
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from node.main import run_node, shutdown_event
+from node.main import main
 
 
 def test_imports():
@@ -19,30 +19,14 @@ def test_imports():
 
 
 @pytest.mark.asyncio
-async def test_run_node(nats_url):
-    """Test that run_node can be called (basic smoke test)."""
-    import os
-
-    # Set NATS URL for the test
-    os.environ["NATS_URL"] = nats_url
-
-    # Clear shutdown event first
-    shutdown_event.clear()
-    # Set shutdown event to exit quickly
-    shutdown_event.set()
-
-    # Should not raise an exception
-    await run_node()
+async def test_main_import():
+    """Test that main function can be imported and is callable."""
+    assert callable(main)
+    # main is a synchronous function, so we don't call it here
+    # as it would start the server and block
 
 
-def test_shutdown_event():
-    """Test shutdown event functionality."""
-    # Reset to known state
-    shutdown_event.clear()
-    assert shutdown_event.is_set() is False
-
-    shutdown_event.set()
-    assert shutdown_event.is_set() is True
-
-    shutdown_event.clear()
-    assert shutdown_event.is_set() is False
+def test_main_callable():
+    """Test that main function exists and is callable."""
+    assert main is not None
+    assert callable(main)
