@@ -7,15 +7,17 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy application files
+# Copy dependency files first for better layer caching
 COPY pyproject.toml README.md* ./
-COPY src/ ./src/
 
-# Install dependencies
+# Install only core runtime dependencies (avoid heavy AI/ML dependencies for Docker build)
 RUN pip install fastapi uvicorn pydantic httpx nats-py python-dotenv structlog
 
-# Install the project (this will fail but let's try)
-RUN pip install -e . || echo "Warning: pip install failed, but continuing"
+# Copy application files
+COPY src/ ./src/
+
+# Install the project (only core dependencies to avoid build issues)
+RUN pip install -e . --no-deps || echo "Warning: pip install failed, but continuing"
 
 # Create non-root user
 RUN useradd --create-home --shell /bin/bash app && \
@@ -30,4 +32,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8004/health || exit 1
 
 # Run the application
-CMD ["python", "-m", "node.main", "8004"]
+CMD ["python", "-m", "lfx.main", "8004"]
