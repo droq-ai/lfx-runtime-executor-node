@@ -26,7 +26,7 @@ cd node
 uv sync
 
 # 2. Install Langflow dependencies (if needed)
-uv pip install -e ../app/src/lfx
+uv pip install -e ../app/src/node
 
 # 3. Run the executor
 PYTHONPATH=src python -m node.main
@@ -135,7 +135,7 @@ docker build -f node/Dockerfile -t langflow-executor-node:latest .
 ```
 
 This allows the Dockerfile to access both:
-- `app/src/lfx/` - Langflow source code
+- `app/src/node/` - Node source code
 - `node/` - Executor node source code
 
 ## Next Steps

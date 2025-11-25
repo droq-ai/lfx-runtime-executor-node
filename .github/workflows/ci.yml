@@ -69,12 +69,12 @@ jobs:
       - name: Check formatting
         run: |
           source .venv/bin/activate
-          black --check src/lfx/ tests/
+          black --check src/node/ tests/
 
       - name: Lint
         run: |
           source .venv/bin/activate
-          ruff check src/lfx/ tests/
+          ruff check src/node/ tests/
 
       - name: Verify components
         run: |
