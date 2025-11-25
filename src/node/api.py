@@ -58,7 +58,7 @@ async def get_nats_client():
     global _nats_client
     if _nats_client is None:
         logger.info("[NATS] Creating new NATS client instance...")
-        from node.nats import NATSClient
+        from .nats import NATSClient
 
         nats_url = os.getenv("NATS_URL", "nats://localhost:4222")
         logger.info(f"[NATS] Connecting to NATS at {nats_url}")

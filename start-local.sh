@@ -34,16 +34,16 @@ if [ -d ".venv" ]; then
     fi
 fi
 
-# Install local lfx package in editable mode so executor node uses latest code
-if [ -d "lfx/src" ]; then
-    echo "Installing local lfx package (editable mode)..."
-    uv pip install -e ./lfx/src >/dev/null 2>&1 || true
+# Install local node package in editable mode so executor node uses latest code
+if [ -d "src/node" ]; then
+    echo "Installing local node package (editable mode)..."
+    uv pip install -e ./src/node >/dev/null 2>&1 || true
 fi
 
-# Check if Langflow is installed (fallback to backend package if local doesn't exist)
-if ! python -c "import lfx" 2>/dev/null; then
-    echo "Installing Langflow dependencies from backend..."
-    uv pip install -e ../app/src/lfx
+# Check if Node is installed (fallback to backend package if local doesn't exist)
+if ! python -c "import node" 2>/dev/null; then
+    echo "Installing Node dependencies from backend..."
+    uv pip install -e ../app/src/node
 fi
 
 echo "Skipping automatic LangChain package reinstall (managed via pyproject)."
@@ -72,6 +72,6 @@ export PORT="${PORT:-8000}"
 export RELOAD="${RELOAD:-true}"
 export LOG_LEVEL="${LOG_LEVEL:-info}"
 
-# Run the lfx main module directly with Python (dependencies should already be installed)
-python -c "import sys; sys.path.insert(0, 'src'); from lfx.main import main; main()"
+# Run the node main module directly with Python (dependencies should already be installed)
+python -c "import sys; sys.path.insert(0, 'src'); from node.main import main; main()"
 

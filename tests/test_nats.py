@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 async def test_nats_client_import():
     """Test that NATS client can be imported."""
     try:
-        from lfx.nats import NATSClient
+        from node.nats import NATSClient
 
         assert NATSClient is not None
     except ImportError:
@@ -24,7 +24,7 @@ async def test_nats_client_import():
 async def test_nats_client_initialization():
     """Test NATS client initialization."""
     try:
-        from lfx.nats import NATSClient
+        from node.nats import NATSClient
 
         client = NATSClient(nats_url="nats://localhost:4222", stream_name="test-stream")
         assert client.nats_url == "nats://localhost:4222"
@@ -39,7 +39,7 @@ async def test_nats_connect(nats_url):
     try:
         import uuid
 
-        from lfx.nats import NATSClient
+        from node.nats import NATSClient
 
         # Use unique stream name to avoid conflicts
         unique_id = str(uuid.uuid4())[:8]
@@ -61,7 +61,7 @@ async def test_nats_publish(nats_url):
     try:
         import uuid
 
-        from lfx.nats import NATSClient
+        from node.nats import NATSClient
 
         # Use unique stream name to avoid conflicts
         unique_id = str(uuid.uuid4())[:8]
@@ -84,7 +84,7 @@ async def test_nats_subscribe(nats_url):
         import asyncio
         import uuid
 
-        from lfx.nats import NATSClient
+        from node.nats import NATSClient
 
         # Use UUID to ensure unique stream names and avoid subject conflicts
         unique_id = str(uuid.uuid4())[:8]
@@ -148,7 +148,7 @@ async def test_nats_subscribe(nats_url):
 async def test_http_client_import():
     """Test that HTTP client can be imported."""
     try:
-        from lfx.http import HTTPClient
+        from node.http import HTTPClient
 
         assert HTTPClient is not None
     except ImportError:
@@ -159,7 +159,7 @@ async def test_http_client_import():
 async def test_http_client_initialization():
     """Test HTTP client initialization."""
     try:
-        from lfx.http import HTTPClient
+        from node.http import HTTPClient
 
         client = HTTPClient(base_url="https://api.example.com", timeout=30)
         assert client.base_url == "https://api.example.com"

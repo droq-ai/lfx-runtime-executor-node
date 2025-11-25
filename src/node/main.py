@@ -42,7 +42,7 @@ def main():
     # Note: For reload to work, we need to pass app as import string
     if reload:
         uvicorn.run(
-            "lfx.api:app",
+            "node.api:app",
             host=host,
             port=port,
             reload=reload,
