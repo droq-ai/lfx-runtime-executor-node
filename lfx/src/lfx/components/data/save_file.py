@@ -463,6 +463,9 @@ class SaveToFileComponent(Component):
             msg = f"Unsupported input type: {self._get_input_type()}"
             raise ValueError(msg)
 
+        if not file_path.exists():
+            return Message(text=confirmation)
+
         # Upload the saved file
         await self._upload_file(file_path)
 
