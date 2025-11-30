@@ -137,8 +137,6 @@ class ConditionalRouterComponent(Component):
 
         When max_iterations is reached, breaks the cycle by allowing the default_route to execute.
         """
-        if not hasattr(self, "graph") or self.graph is None or not getattr(self, "_vertex", None):
-            return
         if not self.__iteration_updated:
             self.update_ctx({f"{self._id}_iteration": self.ctx.get(f"{self._id}_iteration", 0) + 1})
             self.__iteration_updated = True

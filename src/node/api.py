@@ -2,17 +2,14 @@
 
 import asyncio
 import importlib
-import inspect
 import json
 import logging
 import os
 import sys
 import time
-import uuid
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from langchain_core.tools import BaseTool, Tool
 from pydantic import BaseModel
 
 # Add lfx to Python path if it exists in the node directory
@@ -22,51 +19,119 @@ if os.path.exists(_lfx_path) and _lfx_path not in sys.path:
     sys.path.insert(0, _lfx_path)
 
 logger = logging.getLogger(__name__)
+
+# Import NATS client
+try:
+    from node.nats import NATSClient
+except ImportError:
+    NATSClient = None
+    logger.warning("NATS client not available - publishing to NATS will be disabled")
 if os.path.exists(_lfx_path):
     logger.debug(f"Added lfx to Python path: {_lfx_path}")
+
+
+def _create_precomputed_embeddings(vectors: list, texts: list):
+    """Create a LangChain-compatible Embeddings object from pre-computed vectors.
+    
+    This is a fallback when lfx.components.dfx.embeddings is not available.
+    """
+    try:
+        from langchain.embeddings.base import Embeddings
+    except ImportError:
+        try:
+            from langchain_core.embeddings import Embeddings
+        except ImportError:
+            # If LangChain isn't available, return a simple wrapper
+            class Embeddings:
+                pass
+    
+    class LocalPrecomputedEmbeddings(Embeddings):
+        """Local LangChain Embeddings wrapper for pre-computed vectors."""
+        
+        def __init__(self, vectors: list, texts: list):
+            self._vectors = vectors or []
+            self._texts = texts or []
+            self._text_to_vector = {}
+            for i, text in enumerate(self._texts):
+                if i < len(self._vectors) and text:
+                    self._text_to_vector[text] = self._vectors[i]
+        
+        def embed_documents(self, texts: list) -> list:
+            results = []
+            for i, text in enumerate(texts):
+                if text in self._text_to_vector:
+                    results.append(self._text_to_vector[text])
+                elif i < len(self._vectors):
+                    results.append(self._vectors[i])
+                elif self._vectors:
+                    results.append(self._vectors[0])
+                else:
+                    results.append([])
+            return results
+        
+        def embed_query(self, text: str) -> list:
+            if text in self._text_to_vector:
+                return self._text_to_vector[text]
+            return self._vectors[0] if self._vectors else []
+        
+        @property
+        def vectors(self):
+            return self._vectors
+        
+        @property
+        def texts(self):
+            return self._texts
+    
+    return LocalPrecomputedEmbeddings(vectors, texts)
+
 
 # Load component mapping from JSON file
 _components_json_path = os.path.join(_node_dir, "components.json")
 _component_map: dict[str, str] = {}
-print(f"[EXECUTOR] Looking for components.json at: {_components_json_path}")
-print(f"[EXECUTOR] Node dir: {_node_dir}")
+logger.info(f"Looking for components.json at: {_components_json_path}")
+logger.info(f"Node dir: {_node_dir}")
 if os.path.exists(_components_json_path):
     try:
         with open(_components_json_path, "r") as f:
             _component_map = json.load(f)
-        print(f"[EXECUTOR] ✅ Loaded {len(_component_map)} component mappings from {_components_json_path}")
         logger.info(f"Loaded {len(_component_map)} component mappings from {_components_json_path}")
     except Exception as e:
-        print(f"[EXECUTOR] ❌ Failed to load components.json: {e}")
         logger.warning(f"Failed to load components.json: {e}")
 else:
-    print(f"[EXECUTOR] ❌ components.json not found at {_components_json_path}")
     logger.warning(f"components.json not found at {_components_json_path}")
 
 app = FastAPI(title="Langflow Executor Node", version="0.1.0")
 
-# Initialize NATS client (lazy connection)
-_nats_client = None
+# Global NATS client instance
+_nats_client: NATSClient | None = None
 
 
-async def get_nats_client():
-    """Get or create NATS client instance."""
+@app.on_event("startup")
+async def startup_event():
+    """Initialize NATS client on startup."""
     global _nats_client
-    if _nats_client is None:
-        logger.info("[NATS] Creating new NATS client instance...")
-        from node.nats import NATSClient
-        nats_url = os.getenv("NATS_URL", "nats://localhost:4222")
-        logger.info(f"[NATS] Connecting to NATS at {nats_url}")
-        _nats_client = NATSClient(nats_url=nats_url)
+    if NATSClient is not None:
         try:
+            _nats_client = NATSClient()
             await _nats_client.connect()
-            logger.info("[NATS] ✅ Successfully connected to NATS")
+            logger.info("NATS client initialized and connected")
         except Exception as e:
-            logger.warning(f"[NATS] ❌ Failed to connect to NATS (non-critical): {e}", exc_info=True)
+            logger.warning(f"Failed to initialize NATS client: {e}. Publishing to NATS will be disabled.")
             _nats_client = None
     else:
-        logger.debug("[NATS] Using existing NATS client instance")
-    return _nats_client
+        logger.warning("NATS client not available - publishing to NATS will be disabled")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Close NATS connection on shutdown."""
+    global _nats_client
+    if _nats_client:
+        try:
+            await _nats_client.close()
+            logger.info("NATS connection closed")
+        except Exception as e:
+            logger.warning(f"Error closing NATS connection: {e}")
 
 
 class ComponentState(BaseModel):
@@ -81,7 +146,6 @@ class ComponentState(BaseModel):
     display_name: str | None = None
     component_id: str | None = None
     stream_topic: str | None = None  # NATS stream topic for publishing results
-    attributes: dict[str, Any] | None = None  # Serialized _attributes (loop state, etc.)
 
 
 class ExecutionRequest(BaseModel):
@@ -91,7 +155,7 @@ class ExecutionRequest(BaseModel):
     method_name: str
     is_async: bool = False
     timeout: int = 30
-    message_id: str | None = None  # Unique message ID from backend for tracking published messages
+    message_id: str | None = None  # Message ID for NATS publishing
 
 
 class ExecutionResponse(BaseModel):
@@ -102,8 +166,6 @@ class ExecutionResponse(BaseModel):
     result_type: str
     execution_time: float
     error: str | None = None
-    message_id: str | None = None  # Unique ID for the published NATS message
-    updated_attributes: dict[str, Any] | None = None
 
 
 async def load_component_class(
@@ -125,34 +187,20 @@ async def load_component_class(
     """
     # If module path is wrong (validation wrapper), try to find the correct module from components.json
     if module_name in ("lfx.custom.validate", "lfx.custom.custom_component.component"):
-        print(f"[EXECUTOR] Module path is incorrect ({module_name}), looking up {class_name} in components.json (map size: {len(_component_map)})")
         logger.info(f"Module path is incorrect ({module_name}), looking up correct module for {class_name} in components.json")
         
         # Look up the correct module path from the JSON mapping
         if class_name in _component_map:
             correct_module = _component_map[class_name]
-            print(f"[EXECUTOR] ✅ Found mapping: {class_name} -> {correct_module}")
             logger.info(f"Found module mapping: {class_name} -> {correct_module}")
             try:
                 module = importlib.import_module(correct_module)
                 component_class = getattr(module, class_name)
-                print(f"[EXECUTOR] ✅ Successfully loaded {class_name} from {correct_module}")
                 logger.info(f"Successfully loaded {class_name} from mapped module {correct_module}")
                 return component_class
             except (ImportError, AttributeError) as e:
-                print(f"[EXECUTOR] ❌ Failed to load {class_name} from {correct_module}: {e}")
                 logger.warning(f"Failed to load {class_name} from mapped module {correct_module}: {e}")
-                # Fall back to code execution if module import fails
-                if component_code:
-                    print(f"[EXECUTOR] Falling back to code execution for {class_name}")
-                    logger.info(f"Falling back to code execution for {class_name}")
-                    try:
-                        return await load_component_from_code(component_code, class_name)
-                    except Exception as code_error:
-                        logger.error(f"Code execution also failed for {class_name}: {code_error}")
-                        # Continue to next fallback attempt
         else:
-            print(f"[EXECUTOR] ❌ Component {class_name} not found in components.json (available: {list(_component_map.keys())[:5]}...)")
             logger.warning(f"Component {class_name} not found in components.json mapping")
     
     # First try loading from the provided module path
@@ -305,6 +353,32 @@ def serialize_result(result: Any) -> Any:
     if "ModelMetaclass" in result_type_str or "metaclass" in result_type_str.lower():
         return f"<metaclass: {getattr(result, '__name__', type(result).__name__)}>"
     
+    # Handle DataFrame (langflow wrapper around pandas DataFrame)
+    type_name = type(result).__name__
+    if type_name == "DataFrame":
+        # Check if it has a 'data' attribute that is a pandas DataFrame
+        if hasattr(result, "data"):
+            inner_data = result.data
+            # Check if inner_data is a pandas DataFrame
+            if hasattr(inner_data, "to_dict"):
+                try:
+                    records = inner_data.to_dict(orient="records")
+                    return {"type": "DataFrame", "data": records}
+                except Exception:
+                    pass
+        # Maybe it IS a pandas DataFrame directly
+        if hasattr(result, "to_dict"):
+            try:
+                records = result.to_dict(orient="records")
+                return {"type": "DataFrame", "data": records}
+            except Exception:
+                pass
+    
+    # Handle Data objects (langflow Data type)  
+    if type_name == "Data":
+        if hasattr(result, "data") and isinstance(result.data, dict):
+            return {"type": "Data", "data": result.data}
+    
     # Handle lists/tuples first (before other checks)
     if isinstance(result, (list, tuple)):
         return [serialize_result(item) for item in result]
@@ -373,7 +447,38 @@ def deserialize_input_value(value: Any) -> Any:
         # Recursively handle lists
         if isinstance(value, list):
             return [deserialize_input_value(item) for item in value]
+        # Log non-dict values for debugging
+        if value is not None and value != "":
+            logger.debug(f"[DESERIALIZE] Non-dict value: type={type(value).__name__}, value={repr(value)[:100]}")
         return value
+    
+    # Check if it's a serialized PrecomputedEmbeddings object (from DFX Embeddings component)
+    if value.get("type") == "PrecomputedEmbeddings":
+        vectors = value.get("vectors", [])
+        texts = value.get("texts", [])
+        logger.info(f"[DESERIALIZE] 🎯 Found PrecomputedEmbeddings: {len(vectors)} vectors, {len(texts)} texts")
+        # Reconstruct PrecomputedEmbeddings from serialized data
+        try:
+            from lfx.components.dfx.embeddings import PrecomputedEmbeddings
+            logger.info(f"[DESERIALIZE] 🎯 Reconstructing PrecomputedEmbeddings from embeddings.py")
+            return PrecomputedEmbeddings(vectors=vectors, texts=texts)
+        except ImportError:
+            # Fallback: try export_embeddings version
+            try:
+                from lfx.components.dfx.export_embeddings import PrecomputedEmbeddings
+                logger.info(f"[DESERIALIZE] 🎯 Reconstructing PrecomputedEmbeddings from export_embeddings.py")
+                return PrecomputedEmbeddings(
+                    [{"vector": v, "text": t} for v, t in zip(vectors, texts)]
+                )
+            except ImportError:
+                # Last fallback: create a local Embeddings wrapper
+                logger.info(f"[DESERIALIZE] 🎯 Creating local PrecomputedEmbeddings wrapper")
+                return _create_precomputed_embeddings(vectors, texts)
+    
+    # Check if it's an Embeddings type marker (fallback serialization)
+    if value.get("type") == "Embeddings":
+        logger.warning(f"[DESERIALIZE] ⚠️ Found Embeddings type marker without vectors (class: {value.get('class')})")
+        return _create_precomputed_embeddings([], [])
     
     # Try to reconstruct Data or Message objects
     try:
@@ -454,102 +559,6 @@ def deserialize_input_value(value: Any) -> Any:
     return {k: deserialize_input_value(v) for k, v in value.items()}
 
 
-def sanitize_tool_inputs(component_params: dict[str, Any], component_class: str | None = None) -> list[BaseTool] | None:
-    """Ensure `tools` parameter only contains LangChain tool objects.
-
-    When components (especially agents) run in tool mode, the backend currently
-    serializes tool objects into plain dictionaries. Those dictionaries do not
-    expose attributes like `.name`, which causes `validate_tool_names` to raise
-    AttributeError. Drop any invalid entries so execution can proceed without
-    crashing. Workflows that genuinely depend on those tools will still log a
-    warning, but at least the agent can run (albeit without tool support).
-    """
-
-    tools_value = component_params.get("tools")
-    if not tools_value:
-        return None
-
-    candidates = tools_value if isinstance(tools_value, list) else [tools_value]
-    valid_tools: list[BaseTool] = []
-    invalid_types: list[str] = []
-    for tool in candidates:
-        if isinstance(tool, BaseTool):
-            valid_tools.append(tool)
-            continue
-        reconstructed = reconstruct_tool(tool)
-        if reconstructed:
-            valid_tools.append(reconstructed)
-            continue
-        invalid_types.append(type(tool).__name__)
-
-    if invalid_types:
-        logger.warning(
-            "[%s] Dropping %d invalid tool payload(s); expected LangChain BaseTool instances, got: %s",
-            component_class or "Component",
-            len(invalid_types),
-            ", ".join(sorted(set(invalid_types))),
-        )
-
-    component_params["tools"] = valid_tools
-    return valid_tools
-
-
-def reconstruct_tool(value: Any) -> BaseTool | None:
-    """Attempt to rebuild a LangChain tool from serialized metadata."""
-    if not isinstance(value, dict):
-        return None
-
-    name = value.get("name")
-    description = value.get("description", "")
-    metadata = value.get("metadata", {})
-    if not name:
-        return None
-
-    def _tool_func(*args, **kwargs):
-        logger.warning(
-            "Tool '%s' invoked in executor context; returning placeholder response.",
-            name,
-        )
-        return {
-            "tool": name,
-            "status": "unavailable",
-            "message": "Tool cannot execute inside executor context; please route to appropriate node.",
-        }
-
-    try:
-        # Tool from langchain_core.tools can wrap simple callables
-        reconstructed = Tool(
-            name=name,
-            description=description or metadata.get("display_description", ""),
-            func=_tool_func,
-            coroutine=None,
-        )
-        # CRITICAL: Preserve ALL metadata including _component_state for remote tool execution
-        # The backend serializes component_state in metadata, and we MUST preserve it
-        reconstructed.metadata = metadata.copy() if metadata else {}
-        
-        # Log if _component_state is present (for debugging)
-        if "_component_state" in reconstructed.metadata:
-            component_state = reconstructed.metadata["_component_state"]
-            params = component_state.get("parameters", {}) if isinstance(component_state, dict) else {}
-            logger.info(
-                "Reconstructed tool '%s' with _component_state containing %d parameters: %s",
-                name,
-                len(params),
-                list(params.keys()) if params else "NONE",
-            )
-        else:
-            logger.warning(
-                "Reconstructed tool '%s' is MISSING _component_state in metadata - remote execution may fail!",
-                name,
-            )
-        
-        return reconstructed
-    except Exception as exc:
-        logger.warning("Failed to reconstruct tool '%s': %s", name, exc)
-        return None
-
-
 @app.post("/api/v1/execute", response_model=ExecutionResponse)
 async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
     """
@@ -562,18 +571,15 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
         Execution response with result or error
     """
     start_time = time.time()
+
     try:
         # Log what we received
-        stream_topic_value = request.component_state.stream_topic
-        log_msg = (
+        logger.info(
             f"Received execution request: "
             f"class={request.component_state.component_class}, "
             f"module={request.component_state.component_module}, "
-            f"code_length={len(request.component_state.component_code or '') if request.component_state.component_code else 0}, "
-            f"stream_topic={stream_topic_value}"
+            f"code_length={len(request.component_state.component_code or '') if request.component_state.component_code else 0}"
         )
-        logger.info(log_msg)
-        print(f"[EXECUTOR] {log_msg}")  # Also print to ensure visibility
         
         # Load component class dynamically
         component_class = await load_component_class(
@@ -587,21 +593,33 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
         
         # Merge input_values (runtime values from upstream components) into parameters
         # These override static parameters since they contain the actual workflow data
-        deserialized_inputs: dict[str, Any] = {}
         if request.component_state.input_values:
+            # Log raw input values for debugging
+            for k, v in request.component_state.input_values.items():
+                v_type = type(v).__name__
+                if isinstance(v, dict):
+                    v_preview = f"dict with keys: {list(v.keys())[:5]}, type={v.get('type')}"
+                elif isinstance(v, str):
+                    v_preview = f"str len={len(v)}, preview={repr(v[:100])}"
+                elif isinstance(v, list):
+                    v_preview = f"list len={len(v)}"
+                else:
+                    v_preview = repr(v)[:100]
+                logger.info(f"[RAW INPUT] {k}: {v_type} = {v_preview}")
+            
             # Deserialize input values to reconstruct Data/Message objects
-            for key, value in request.component_state.input_values.items():
-                deserialized = deserialize_input_value(value)
-                # Skip None values to avoid overriding defaults with invalid types
-                if deserialized is None:
-                    logger.debug(
-                        "Skipping None input value for %s to preserve component default", key
-                    )
-                    continue
-                deserialized_inputs[key] = deserialized
+            deserialized_inputs = {
+                k: deserialize_input_value(v) 
+                for k, v in request.component_state.input_values.items()
+            }
+            
+            # Log deserialized values
+            for k, v in deserialized_inputs.items():
+                logger.info(f"[DESERIALIZED INPUT] {k}: {type(v).__name__}")
+            
             component_params.update(deserialized_inputs)
             logger.info(
-                f"Merged {len(deserialized_inputs)} input values from upstream components "
+                f"Merged {len(request.component_state.input_values)} input values from upstream components "
                 f"(deserialized to proper types)"
             )
         
@@ -610,17 +628,6 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
             for key, value in request.component_state.config.items():
                 component_params[f"_{key}"] = value
 
-        if request.component_state.component_class == "AgentComponent":
-            logger.info(
-                "[AgentComponent] input keys: %s; tools raw payload: %s",
-                list((request.component_state.input_values or {}).keys()),
-                (request.component_state.input_values or {}).get("tools"),
-            )
-            if request.component_state.input_values and request.component_state.input_values.get("tools"):
-                sample_tool = request.component_state.input_values["tools"][0]
-                logger.debug("[AgentComponent] Sample tool payload keys: %s", list(sample_tool.keys()))
-                logger.debug("[AgentComponent] Sample tool metadata: %s", sample_tool.get("metadata"))
-
         logger.info(
             f"Instantiating {request.component_state.component_class} "
             f"with {len(component_params)} parameters "
@@ -628,66 +635,7 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
             f"inputs: {len(request.component_state.input_values or {})}, "
             f"config: {len(request.component_state.config or {})})"
         )
-        # Drop None values to mimic Langflow's default handling (unset fields)
-        if component_params:
-            filtered_params = {
-                key: value for key, value in component_params.items() if value is not None
-            }
-            if len(filtered_params) != len(component_params):
-                logger.debug(
-                    "Removed %d None-valued parameters before instantiation",
-                    len(component_params) - len(filtered_params),
-                )
-            component_params = filtered_params
-
-        # Ensure `tools` parameter contains valid tool instances only
-        sanitized_tools = sanitize_tool_inputs(component_params, request.component_state.component_class)
-        if sanitized_tools is not None and "tools" in deserialized_inputs:
-            deserialized_inputs["tools"] = sanitized_tools
-
         component = component_class(**component_params)
-
-        # Restore serialized _attributes/state (e.g., LoopComponent.__loop_state)
-        restored_attributes = {}
-        if request.component_state.attributes:
-            try:
-                deserialized_attrs = deserialize_input_value(request.component_state.attributes)
-                if isinstance(deserialized_attrs, dict):
-                    restored_attributes = deserialized_attrs
-            except Exception as attr_err:  # noqa: BLE001
-                logger.warning(
-                    "Failed to deserialize component attributes for %s: %s",
-                    request.component_state.component_class,
-                    attr_err,
-                )
-        if restored_attributes:
-            try:
-                if not hasattr(component, "_attributes") or component._attributes is None:
-                    component._attributes = {}
-                component._attributes.update(restored_attributes)
-                logger.info(
-                    "Restored %d attribute(s) onto %s (keys: %s)",
-                    len(restored_attributes),
-                    request.component_state.component_class,
-                    list(restored_attributes.keys()),
-                )
-            except Exception as attr_err:  # noqa: BLE001
-                logger.warning(
-                    "Failed to restore _attributes on %s: %s",
-                    request.component_state.component_class,
-                    attr_err,
-                )
-
-        # Ensure runtime inputs also populate component attributes for template rendering
-        if deserialized_inputs:
-            try:
-                component.set_attributes(deserialized_inputs)
-            except Exception as attr_err:
-                logger.warning(
-                    "Failed to set component attributes from input values (%s): %s",
-                    request.component_state.component_class,
-                    attr_err,
-                )
 
         # Get the method
         if not hasattr(component, request.method_name):
@@ -714,68 +662,61 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
 
         execution_time = time.time() - start_time
 
-        # Serialize result and capture updated component attributes (if any)
+        # Serialize result
         serialized_result = serialize_result(result)
-        updated_attributes = None
-        if hasattr(component, "_attributes"):
+
+        # Check if stream_topic is provided (backend expects NATS publishing)
+        stream_topic = request.component_state.stream_topic
+        message_id = request.message_id
+        
+        # Publish to NATS if stream_topic is provided
+        if stream_topic and _nats_client and _nats_client.js:
             try:
-                updated_attributes = serialize_result(getattr(component, "_attributes", {}))
-            except Exception as attr_err:  # noqa: BLE001
-                logger.warning("Failed to serialize component attributes: %s", attr_err)
-                updated_attributes = None
+                # Prepare message payload matching backend's expected format
+                nats_payload = {
+                    "message_id": message_id,
+                    "result": serialized_result,
+                    "result_type": type(result).__name__,
+                    "execution_time": execution_time,
+                    "success": True,
+                }
+                
+                # Publish directly to the full stream_topic using JetStream
+                # stream_topic format: droq.local.public.{user_id}.{flow_id}.{component_id}.out
+                # We publish directly without adding stream_name prefix (it's already in the topic)
+                payload_bytes = json.dumps(nats_payload).encode()
+                headers = {"message_id": message_id} if message_id else None
+                
+                await _nats_client.js.publish(stream_topic, payload_bytes, headers=headers)
+                logger.info(
+                    f"[NATS] ✅ Published result to stream_topic={stream_topic}, message_id={message_id}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"[NATS] ❌ Failed to publish to NATS: {e}. "
+                    f"Backend will fall back to HTTP result after timeout.",
+                    exc_info=True
+                )
+        elif stream_topic and not _nats_client:
+            logger.warning(
+                f"[NATS] ⚠️ stream_topic={stream_topic} provided but NATS client not available. "
+                f"Backend will wait ~5+ seconds for NATS timeout before using HTTP result."
+            )
+        else:
+            logger.debug(
+                f"[NATS] No stream_topic provided - HTTP-only response (no NATS publishing needed)"
+            )
 
         logger.info(
             f"Method {request.method_name} completed successfully "
             f"in {execution_time:.3f}s, result type: {type(result).__name__}"
         )
 
-        # Use message_id from request (generated by backend) or generate one if not provided
-        message_id = request.message_id or str(uuid.uuid4())
-        
-        # Publish result to NATS stream if topic is provided
-        if request.component_state.stream_topic:
-            topic = request.component_state.stream_topic
-            logger.info(f"[NATS] Attempting to publish to topic: {topic} with message_id: {message_id}")
-            print(f"[NATS] Attempting to publish to topic: {topic} with message_id: {message_id}")
-            try:
-                nats_client = await get_nats_client()
-                if nats_client:
-                    logger.info(f"[NATS] NATS client obtained, preparing publish data...")
-                    print(f"[NATS] NATS client obtained, preparing publish data...")
-                    # Publish result to NATS with message ID from backend
-                    publish_data = {
-                        "message_id": message_id,  # Use message_id from backend request
-                        "component_id": request.component_state.component_id,
-                        "component_class": request.component_state.component_class,
-                        "result": serialized_result,
-                        "result_type": type(result).__name__,
-                        "execution_time": execution_time,
-                    }
-                    logger.info(f"[NATS] Publishing to topic: {topic}, message_id: {message_id}, data keys: {list(publish_data.keys())}")
-                    print(f"[NATS] Publishing to topic: {topic}, message_id: {message_id}, data keys: {list(publish_data.keys())}")
-                    # Use the topic directly (already in format: droq.local.public.userid.workflowid.component.out)
-                    await nats_client.publish(topic, publish_data)
-                    logger.info(f"[NATS] ✅ Successfully published result to NATS topic: {topic} with message_id: {message_id}")
-                    print(f"[NATS] ✅ Successfully published result to NATS topic: {topic} with message_id: {message_id}")
-                else:
-                    logger.warning(f"[NATS] NATS client is None, cannot publish")
-                    print(f"[NATS] ⚠️  NATS client is None, cannot publish")
-            except Exception as e:
-                # Non-critical: log but don't fail execution
-                logger.warning(f"[NATS] ❌ Failed to publish to NATS (non-critical): {e}", exc_info=True)
-                print(f"[NATS] ❌ Failed to publish to NATS (non-critical): {e}")
-        else:
-            msg = f"[NATS] ⚠️  No stream_topic provided in request, skipping NATS publish. Component: {request.component_state.component_class}, ID: {request.component_state.component_id}"
-            logger.info(msg)
-            print(msg)
-
         return ExecutionResponse(
             result=serialized_result,
             success=True,
             result_type=type(result).__name__,
             execution_time=execution_time,
-            message_id=message_id,  # Return message ID (from request or generated) so backend can match it
-            updated_attributes=updated_attributes,
         )
 
     except asyncio.TimeoutError:

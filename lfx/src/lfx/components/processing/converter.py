@@ -12,38 +12,12 @@ def convert_to_message(v) -> Message:
     """Convert input to Message type.
 
     Args:
-        v: Input to convert (Message, Data, DataFrame, dict, or str)
+        v: Input to convert (Message, Data, DataFrame, or dict)
 
     Returns:
         Message: Converted Message object
     """
-    if isinstance(v, Message):
-        print(f"[TypeConvert] Input already Message: {v}", flush=True)
-        return v
-    if isinstance(v, Data):
-        payload = v.data.copy()
-        text_value = v.get_text() or ""
-        if ((not text_value) or text_value == v.default_value) and payload:
-            import json
-
-            text_value = json.dumps(payload, ensure_ascii=False)
-        print(f"[TypeConvert] Converting Data to Message: {payload} -> {text_value}", flush=True)
-        return Message(text=text_value, data=payload)
-    if isinstance(v, DataFrame):
-        print(f"[TypeConvert] Converting DataFrame to Message: {v.to_dict()}", flush=True)
-        return v.to_message()
-    if isinstance(v, dict):
-        print(f"[TypeConvert] Converting dict to Message: {v}", flush=True)
-        return Data(data=v).to_message()
-    if isinstance(v, str):
-        print(f"[TypeConvert] Converting str to Message: {v}", flush=True)
-        return Message(text=v)
-    if hasattr(v, "to_message"):
-        print(f"[TypeConvert] Using custom to_message for {v}", flush=True)
-        return v.to_message()
-    # Fallback: wrap arbitrary objects as text
-    print(f"[TypeConvert] Fallback Message conversion for {v}", flush=True)
-    return Message(text=str(v))
+    return v if isinstance(v, Message) else v.to_message()
 
 
 def convert_to_data(v: DataFrame | Data | Message | dict, *, auto_parse: bool) -> Data:
@@ -57,35 +31,12 @@ def convert_to_data(v: DataFrame | Data | Message | dict, *, auto_parse: bool) -
         Data: Converted Data object
     """
     if isinstance(v, dict):
-        print(f"[TypeConvert] Converting dict to Data: {v}", flush=True)
         return Data(v)
     if isinstance(v, Message):
-        payload = v.data.copy() if isinstance(v.data, dict) else {}
-        if "text" not in payload:
-            text_content = ""
-            if isinstance(v.text, str):
-                text_content = v.text
-            payload["text"] = text_content
-        payload["metadata"] = payload.get("metadata", {})
-        payload["metadata"].update(
-            {
-                "sender": v.sender,
-                "sender_name": v.sender_name,
-                "session_id": v.session_id,
-                "context_id": v.context_id,
-                "timestamp": v.timestamp,
-                "flow_id": v.flow_id,
-            }
-        )
-        data = Data(data=payload, text_key="text")
-        print(f"[TypeConvert] Converting Message to Data: {payload}", flush=True)
+        data = Data(data={"text": v.data["text"]})
         return parse_structured_data(data) if auto_parse else data
 
-    if isinstance(v, Data):
-        print(f"[TypeConvert] Input already Data: {v.data}", flush=True)
-        return v
-    print(f"[TypeConvert] Using custom to_data for {v}", flush=True)
-    return v.to_data()
+    return v if isinstance(v, Data) else v.to_data()
 
 
 def convert_to_dataframe(v: DataFrame | Data | Message | dict, *, auto_parse: bool) -> DataFrame:
@@ -101,10 +52,8 @@ def convert_to_dataframe(v: DataFrame | Data | Message | dict, *, auto_parse: bo
     import pandas as pd
 
     if isinstance(v, dict):
-        print(f"[TypeConvert] Converting dict to DataFrame: {v}", flush=True)
         return DataFrame([v])
     if isinstance(v, DataFrame):
-        print(f"[TypeConvert] Input already DataFrame", flush=True)
         return v
     # Handle pandas DataFrame
     if isinstance(v, pd.DataFrame):
@@ -113,10 +62,8 @@ def convert_to_dataframe(v: DataFrame | Data | Message | dict, *, auto_parse: bo
 
     if isinstance(v, Message):
         data = Data(data={"text": v.data["text"]})
-        print(f"[TypeConvert] Converting Message to DataFrame: {data.data}", flush=True)
         return parse_structured_data(data).to_dataframe() if auto_parse else data.to_dataframe()
     # For other types, call to_dataframe method
-    print(f"[TypeConvert] Using custom to_dataframe for {v}", flush=True)
     return v.to_dataframe()
 
 

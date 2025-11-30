@@ -36,8 +36,8 @@ class PythonREPLComponent(Component):
             name="data_inputs",
             display_name="Data Inputs",
             info=(
-                "Optional Data/DataFrame inputs accessible via the variables "
-                "`data_inputs`, `inputs`, `first_input`, and `input_data` inside your code."
+                "Optional Data/DataFrame inputs accessible inside your code via the variables "
+                "`data_inputs`, `inputs`, `first_input`, and `input_data`."
             ),
             is_list=True,
             required=False,
@@ -86,6 +86,8 @@ class PythonREPLComponent(Component):
         try:
             prepared_inputs = self._prepare_data_inputs()
             globals_ = self.get_globals(self.global_imports)
+            
+            # Inject data inputs into globals with multiple variable names for convenience
             globals_["data_inputs"] = prepared_inputs
             globals_["inputs"] = prepared_inputs
             if prepared_inputs:
@@ -98,8 +100,36 @@ class PythonREPLComponent(Component):
 
             self.log("Code execution completed successfully")
             payload = {"result": result}
+
+            # Only include serializable locals (skip complex objects)
             if python_repl.locals:
-                payload["locals"] = {k: v for k, v in python_repl.locals.items() if not k.startswith("__")}
+                serializable_locals = {}
+                for k, v in python_repl.locals.items():
+                    if k.startswith("__"):
+                        continue
+                    # Only include JSON-serializable types
+                    if isinstance(v, (str, int, float, bool, type(None))):
+                        serializable_locals[k] = v
+                    elif isinstance(v, (list, tuple)):
+                        try:
+                            # Check if list is serializable
+                            import json
+                            json.dumps(v)
+                            serializable_locals[k] = v
+                        except (TypeError, ValueError):
+                            serializable_locals[k] = str(v)[:200]
+                    elif isinstance(v, dict):
+                        try:
+                            import json
+                            json.dumps(v)
+                            serializable_locals[k] = v
+                        except (TypeError, ValueError):
+                            serializable_locals[k] = f"<dict with {len(v)} keys>"
+                    else:
+                        # Convert non-serializable to string representation
+                        serializable_locals[k] = f"<{type(v).__name__}>"
+                if serializable_locals:
+                    payload["locals"] = serializable_locals
             return Data(data=payload)
 
         except ImportError as e:
@@ -121,21 +151,29 @@ class PythonREPLComponent(Component):
         return self.run_python_repl
 
     def _prepare_data_inputs(self) -> list[dict | str | Data]:
+        """Prepare and normalize the data_inputs for injection into Python globals."""
         data_inputs = getattr(self, "data_inputs", None) or []
-        prepared: list[dict | str | Data] = []
-
-        for data in data_inputs:
-            if isinstance(data, DataFrame):
-                prepared.append(data.to_dict(orient="records"))
-            elif isinstance(data, Message):
-                prepared.append(data.data if data.data else data.text)
-            elif isinstance(data, Data):
-                if data.data:
-                    prepared.append(data.data)
-                elif data.text:
-                    prepared.append(data.text)
-                else:
-                    prepared.append(data)
+        
+        # Ensure it's a list
+        if not isinstance(data_inputs, list):
+            data_inputs = [data_inputs]
+        
+        prepared = []
+        for item in data_inputs:
+            if item is None:
+                continue
+            if isinstance(item, Data):
+                # Keep Data objects as-is, but also expose their .data dict
+                prepared.append(item.data if hasattr(item, 'data') else item)
+            elif isinstance(item, DataFrame):
+                # Convert DataFrame to dict for easy access
+                prepared.append(item.to_dict() if hasattr(item, 'to_dict') else item)
+            elif isinstance(item, Message):
+                # Convert Message to dict
+                prepared.append(item.model_dump() if hasattr(item, 'model_dump') else item)
+            elif isinstance(item, dict):
+                prepared.append(item)
             else:
-                prepared.append(data)
+                prepared.append(item)
+        
         return prepared

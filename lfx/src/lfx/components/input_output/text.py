@@ -1,5 +1,5 @@
 from lfx.base.io.text import TextComponent
-from lfx.io import MultilineInput, Output
+from lfx.io import DataInput, MultilineInput, Output
 from lfx.schema.message import Message
 
 
@@ -15,6 +15,15 @@ class TextInputComponent(TextComponent):
             name="input_value",
             display_name="Text",
             info="Text to be passed as input.",
+        ),
+        DataInput(
+            name="trigger",
+            display_name="Trigger",
+            info=(
+                "Optional input used to retrigger this component when connected in loops or other control "
+                "components. The incoming value is ignored but ensures a new execution."
+            ),
+            required=False,
         ),
     ]
     outputs = [

@@ -74,7 +74,6 @@ class CSVToDataComponent(Component):
             if csv_data:
                 csv_reader = csv.DictReader(io.StringIO(csv_data))
                 result = [Data(data=row, text_key=self.text_key) for row in csv_reader]
-                print(f"[CSVToData] Parsed rows: {len(result)} -> {result}", flush=True)
 
                 if not result:
                     self.status = "The CSV data is empty."

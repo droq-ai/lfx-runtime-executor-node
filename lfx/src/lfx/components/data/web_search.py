@@ -6,15 +6,15 @@ component with tabs for different search modes.
 
 import re
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
 from lfx.custom import Component
-from lfx.io import DropdownInput, IntInput, MessageTextInput, Output, TabInput
-from lfx.schema import Data, DataFrame
+from lfx.io import IntInput, MessageTextInput, Output, TabInput
+from lfx.schema import DataFrame
 from lfx.utils.request_utils import get_user_agent
 
 
@@ -96,14 +96,6 @@ class WebSearchComponent(Component):
             required=False,
             advanced=True,
         ),
-        DropdownInput(
-            name="output_format",
-            display_name="Output Format",
-            options=["Data", "DataFrame"],
-            value="Data",
-            info="Choose the payload type returned by this component.",
-            advanced=False,
-        ),
     ]
 
     outputs = [Output(name="results", display_name="Results", method="perform_search")]
@@ -159,83 +151,63 @@ class WebSearchComponent(Component):
         """Remove HTML tags from text."""
         return BeautifulSoup(html_string, "html.parser").get_text(separator=" ", strip=True)
 
-    def _format_result(self, rows: list[dict]) -> Data | DataFrame:
-        """Return results in the user-selected format."""
-        target = getattr(self, "output_format", "Data")
-        if target == "DataFrame":
-            return DataFrame(pd.DataFrame(rows))
-        return Data(data={"results": rows})
-
-    def perform_web_search(self) -> Data | DataFrame:
-        """Perform Bing web search (fallback to ensure results even when DuckDuckGo blocks automation)."""
-        query = self._sanitize_query(getattr(self, "query", "") or "")
+    def perform_web_search(self) -> DataFrame:
+        """Perform DuckDuckGo web search."""
+        query = self._sanitize_query(self.query)
         if not query:
             msg = "Empty search query"
             raise ValueError(msg)
 
-        headers = {
-            "User-Agent": get_user_agent(),
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Referer": "https://www.bing.com/",
-        }
-        params = {
-            "q": query,
-            "setlang": "en-us",
-            "mkt": "en-US",
-        }
+        headers = {"User-Agent": get_user_agent()}
+        params = {"q": query, "kl": "us-en"}
+        url = "https://html.duckduckgo.com/html/"
 
         try:
-            response = requests.get(
-                "https://www.bing.com/search",
-                params=params,
-                headers=headers,
-                timeout=self.timeout,
-            )
+            response = requests.get(url, params=params, headers=headers, timeout=self.timeout)
             response.raise_for_status()
-        except requests.RequestException as exc:
-            self.status = f"Failed request: {exc!s}"
-            return self._format_result(
-                [{"title": "Error", "link": "", "snippet": str(exc), "content": ""}],
+        except requests.RequestException as e:
+            self.status = f"Failed request: {e!s}"
+            return DataFrame(pd.DataFrame([{"title": "Error", "link": "", "snippet": str(e), "content": ""}]))
+
+        if not response.text or "text/html" not in response.headers.get("content-type", "").lower():
+            self.status = "No results found"
+            return DataFrame(
+                pd.DataFrame([{"title": "Error", "link": "", "snippet": "No results found", "content": ""}])
             )
 
         soup = BeautifulSoup(response.text, "html.parser")
-        result_items = soup.select("li.b_algo")
+        results = []
 
-        if not result_items:
-            # Gracefully handle cases where Bing returns no results or markup changes.
-            self.status = "No web results found."
-            return self._format_result(
-                [{"title": "No results", "link": "", "snippet": "No web results returned.", "content": ""}],
-            )
+        for result in soup.select("div.result"):
+            title_tag = result.select_one("a.result__a")
+            snippet_tag = result.select_one("a.result__snippet")
+            if title_tag:
+                raw_link = title_tag.get("href", "")
+                parsed = urlparse(raw_link)
+                uddg = parse_qs(parsed.query).get("uddg", [""])[0]
+                decoded_link = unquote(uddg) if uddg else raw_link
 
-        results: list[dict[str, str]] = []
-        for item in result_items[:10]:  # limit to top 10 to keep payloads small
-            title_tag = item.select_one("h2 a")
-            snippet_tag = item.select_one(".b_caption p")
-            cite_tag = item.select_one("cite")
+                try:
+                    final_url = self.ensure_url(decoded_link)
+                    page = requests.get(final_url, headers=headers, timeout=self.timeout)
+                    page.raise_for_status()
+                    content = BeautifulSoup(page.text, "lxml").get_text(separator=" ", strip=True)
+                except requests.RequestException as e:
+                    final_url = decoded_link
+                    content = f"(Failed to fetch: {e!s}"
 
-            if not title_tag or not title_tag.get("href"):
-                continue
+                results.append(
+                    {
+                        "title": title_tag.get_text(strip=True),
+                        "link": final_url,
+                        "snippet": snippet_tag.get_text(strip=True) if snippet_tag else "",
+                        "content": content,
+                    }
+                )
 
-            title = title_tag.get_text(strip=True)
-            link = title_tag["href"]
-            snippet = snippet_tag.get_text(" ", strip=True) if snippet_tag else ""
-            display_link = cite_tag.get_text(strip=True) if cite_tag else ""
+        return DataFrame(pd.DataFrame(results))
 
-            results.append(
-                {
-                    "title": title,
-                    "link": link,
-                    "display_link": display_link,
-                    "snippet": snippet,
-                    "content": snippet,
-                }
-            )
-
-        return self._format_result(results)
-
-    def perform_news_search(self) -> Data | DataFrame:
+    def perform_news_search(self) -> DataFrame:
         """Perform Google News search."""
         query = getattr(self, "query", "")
         hl = getattr(self, "hl", "en-US") or "en-US"
@@ -264,8 +236,10 @@ class WebSearchComponent(Component):
             rss_url = f"{base_url}{query_encoded}{params}"
         else:
             self.status = "No search query, topic, or location provided."
-            return self._format_result(
-                [{"title": "Error", "link": "", "published": "", "summary": "No search parameters provided"}],
+            return DataFrame(
+                pd.DataFrame(
+                    [{"title": "Error", "link": "", "published": "", "summary": "No search parameters provided"}]
+                )
             )
 
         try:
@@ -275,15 +249,11 @@ class WebSearchComponent(Component):
             items = soup.find_all("item")
         except requests.RequestException as e:
             self.status = f"Failed to fetch news: {e}"
-            return self._format_result(
-                [{"title": "Error", "link": "", "published": "", "summary": str(e)}],
-            )
+            return DataFrame(pd.DataFrame([{"title": "Error", "link": "", "published": "", "summary": str(e)}]))
 
         if not items:
             self.status = "No news articles found."
-            return self._format_result(
-                [{"title": "No articles found", "link": "", "published": "", "summary": ""}],
-            )
+            return DataFrame(pd.DataFrame([{"title": "No articles found", "link": "", "published": "", "summary": ""}]))
 
         articles = []
         for item in items:
@@ -297,14 +267,14 @@ class WebSearchComponent(Component):
                 self.log(f"Error parsing article: {e!s}")
                 continue
 
-        return self._format_result(articles)
+        return DataFrame(pd.DataFrame(articles))
 
-    def perform_rss_read(self) -> Data | DataFrame:
+    def perform_rss_read(self) -> DataFrame:
         """Read RSS feed."""
         rss_url = getattr(self, "query", "")
         if not rss_url:
-            return self._format_result(
-                [{"title": "Error", "link": "", "published": "", "summary": "No RSS URL provided"}],
+            return DataFrame(
+                pd.DataFrame([{"title": "Error", "link": "", "published": "", "summary": "No RSS URL provided"}])
             )
 
         try:
@@ -325,9 +295,7 @@ class WebSearchComponent(Component):
             items = soup.find_all("item")
         except (requests.RequestException, ValueError) as e:
             self.status = f"Failed to fetch RSS: {e}"
-            return self._format_result(
-                [{"title": "Error", "link": "", "published": "", "summary": str(e)}],
-            )
+            return DataFrame(pd.DataFrame([{"title": "Error", "link": "", "published": "", "summary": str(e)}]))
 
         articles = [
             {
@@ -340,8 +308,9 @@ class WebSearchComponent(Component):
         ]
 
         # Ensure DataFrame has correct columns even if empty
-        self.log(f"Fetched {len(articles)} articles.")
-        return self._format_result(articles)
+        df_articles = pd.DataFrame(articles, columns=["title", "link", "published", "summary"])
+        self.log(f"Fetched {len(df_articles)} articles.")
+        return DataFrame(df_articles)
 
     def perform_search(self) -> DataFrame:
         """Main search method that routes to appropriate search function based on mode."""

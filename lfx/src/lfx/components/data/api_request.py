@@ -166,15 +166,6 @@ class APIRequestComponent(Component):
             ),
             advanced=True,
         ),
-        DataInput(
-            name="trigger",
-            display_name="Trigger",
-            info=(
-                "Optional input used to retrigger this request when connected in loops or other control "
-                "components. The incoming value is ignored but ensures a new execution."
-            ),
-            required=False,
-        ),
     ]
 
     outputs = [

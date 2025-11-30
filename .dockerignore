@@ -1,55 +1,30 @@
-# Git
-.git
-.gitignore
-.gitattributes
-
-# Documentation
-README.md
-docs/
-*.md
-
-# Tests
-tests/
-.pytest_cache/
-.coverage
-
-# Python cache
-__pycache__/
+__pycache__
 *.pyc
 *.pyo
 *.pyd
 .Python
-
-# Virtual environments
-venv/
-env/
+*.so
+*.egg
+*.egg-info
+dist
+build
 .venv
-
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Environment files
+venv
+env
 .env
 .env.local
-
-# Build artifacts
-dist/
-build/
-*.egg-info/
-
-# Docker
-docker-compose.yml
-Dockerfile.dev
-.dockerignore
-
-# CI/CD
-.github/
-.gitlab-ci.yml
-
-# Misc
-.DS_Store
 *.log
-
+.git
+.gitignore
+.github
+tests
+.pytest_cache
+.coverage
+htmlcov
+.mypy_cache
+.ruff_cache
+node_modules
+.DS_Store
+*.swp
+*.swo
+*~
