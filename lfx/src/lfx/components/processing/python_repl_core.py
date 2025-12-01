@@ -3,8 +3,10 @@ import importlib
 from langchain_experimental.utilities import PythonREPL
 
 from lfx.custom.custom_component.component import Component
-from lfx.io import MultilineInput, Output, StrInput
+from lfx.io import DataInput, MultilineInput, Output, StrInput
 from lfx.schema.data import Data
+from lfx.schema.dataframe import DataFrame
+from lfx.schema.message import Message
 
 
 class PythonREPLComponent(Component):
@@ -29,6 +31,17 @@ class PythonREPLComponent(Component):
             input_types=["Message"],
             tool_mode=True,
             required=True,
+        ),
+        DataInput(
+            name="data_inputs",
+            display_name="Data Inputs",
+            info=(
+                "Optional Data/DataFrame inputs accessible inside your code via the variables "
+                "`data_inputs`, `inputs`, `first_input`, and `input_data`."
+            ),
+            is_list=True,
+            required=False,
+            input_types=["Data", "DataFrame", "Message"],
         ),
     ]
 
@@ -71,13 +84,53 @@ class PythonREPLComponent(Component):
 
     def run_python_repl(self) -> Data:
         try:
+            prepared_inputs = self._prepare_data_inputs()
             globals_ = self.get_globals(self.global_imports)
+            
+            # Inject data inputs into globals with multiple variable names for convenience
+            globals_["data_inputs"] = prepared_inputs
+            globals_["inputs"] = prepared_inputs
+            if prepared_inputs:
+                globals_["first_input"] = prepared_inputs[0]
+                globals_["input_data"] = prepared_inputs
+
             python_repl = PythonREPL(_globals=globals_)
             result = python_repl.run(self.python_code)
             result = result.strip() if result else ""
 
             self.log("Code execution completed successfully")
-            return Data(data={"result": result})
+            payload = {"result": result}
+
+            # Only include serializable locals (skip complex objects)
+            if python_repl.locals:
+                serializable_locals = {}
+                for k, v in python_repl.locals.items():
+                    if k.startswith("__"):
+                        continue
+                    # Only include JSON-serializable types
+                    if isinstance(v, (str, int, float, bool, type(None))):
+                        serializable_locals[k] = v
+                    elif isinstance(v, (list, tuple)):
+                        try:
+                            # Check if list is serializable
+                            import json
+                            json.dumps(v)
+                            serializable_locals[k] = v
+                        except (TypeError, ValueError):
+                            serializable_locals[k] = str(v)[:200]
+                    elif isinstance(v, dict):
+                        try:
+                            import json
+                            json.dumps(v)
+                            serializable_locals[k] = v
+                        except (TypeError, ValueError):
+                            serializable_locals[k] = f"<dict with {len(v)} keys>"
+                    else:
+                        # Convert non-serializable to string representation
+                        serializable_locals[k] = f"<{type(v).__name__}>"
+                if serializable_locals:
+                    payload["locals"] = serializable_locals
+            return Data(data=payload)
 
         except ImportError as e:
             error_message = f"Import Error: {e!s}"
@@ -96,3 +149,31 @@ class PythonREPLComponent(Component):
 
     def build(self):
         return self.run_python_repl
+
+    def _prepare_data_inputs(self) -> list[dict | str | Data]:
+        """Prepare and normalize the data_inputs for injection into Python globals."""
+        data_inputs = getattr(self, "data_inputs", None) or []
+        
+        # Ensure it's a list
+        if not isinstance(data_inputs, list):
+            data_inputs = [data_inputs]
+        
+        prepared = []
+        for item in data_inputs:
+            if item is None:
+                continue
+            if isinstance(item, Data):
+                # Keep Data objects as-is, but also expose their .data dict
+                prepared.append(item.data if hasattr(item, 'data') else item)
+            elif isinstance(item, DataFrame):
+                # Convert DataFrame to dict for easy access
+                prepared.append(item.to_dict() if hasattr(item, 'to_dict') else item)
+            elif isinstance(item, Message):
+                # Convert Message to dict
+                prepared.append(item.model_dump() if hasattr(item, 'model_dump') else item)
+            elif isinstance(item, dict):
+                prepared.append(item)
+            else:
+                prepared.append(item)
+        
+        return prepared

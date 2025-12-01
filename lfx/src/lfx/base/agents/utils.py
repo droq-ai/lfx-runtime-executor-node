@@ -220,11 +220,23 @@ def maybe_unflatten_dict(flat: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_chat_output_sender_name(self) -> str | None:
-    """Get sender_name from ChatOutput component."""
+    """Get sender_name from ChatOutput component.
+    
+    Returns None if:
+    - No graph available
+    - Graph has no vertices (e.g., PlaceholderGraph on executor)
+    - No ChatOutput component found
+    """
     if not hasattr(self, "graph") or not self.graph:
         return None
 
-    for vertex in self.graph.vertices:
+    # Use getattr with default - PlaceholderGraph on executor has no vertices
+    # because executor only has the single component being executed, not the full graph
+    vertices = getattr(self.graph, "vertices", None)
+    if not vertices:
+        return None
+
+    for vertex in vertices:
         # Safely check if vertex has data attribute, correct type, and raw_params
         if (
             hasattr(vertex, "data")

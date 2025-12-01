@@ -1,10 +1,10 @@
 """Log schema and types for lfx package."""
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, field_serializer
 from pydantic_core import PydanticSerializationError
-from typing_extensions import Protocol, TypeAlias
+from typing_extensions import Protocol
 
 from lfx.schema.message import ContentBlock, Message
 from lfx.serialization.serialization import serialize
