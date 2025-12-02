@@ -34,12 +34,6 @@ if os.path.exists(_components_json_path):
     try:
         with open(_components_json_path) as f:
             _component_map = json.load(f)
-        print(
-            f"[EXECUTOR] ✅ Loaded {len(_component_map)} component mappings from {_components_json_path}"
-        )
-        logger.info(
-            f"Loaded {len(_component_map)} component mappings from {_components_json_path}"
-        )
     except Exception as e:
         print(f"[EXECUTOR] ❌ Failed to load components.json: {e}")
         logger.warning(f"Failed to load components.json: {e}")
