@@ -2,8 +2,8 @@
 .env
 .env.local
 .env.*.local
-app/langflow-data/
 
+myenv/
 # Python
 __pycache__/
 *.py[cod]

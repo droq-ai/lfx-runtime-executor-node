@@ -6,11 +6,9 @@ import inspect
 import os
 from collections.abc import AsyncIterator, Iterator
 from copy import deepcopy
-from datetime import date, datetime, time
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, get_type_hints
 from uuid import UUID
-import uuid
 
 import httpx
 import nanoid
@@ -75,64 +73,6 @@ def get_component_toolkit():
 BACKWARDS_COMPATIBLE_ATTRIBUTES = ["user_id", "vertex", "tracing_service"]
 CONFIG_ATTRIBUTES = ["_display_name", "_description", "_icon", "_name", "_metadata"]
 
-EXECUTOR_METADATA_CACHE: dict[str, dict[str, Any] | None] = {}
-
-
-def _get_registry_service_url() -> str:
-    return os.getenv("REGISTRY_SERVICE_URL", "http://localhost:8002")
-
-
-def get_local_node_id() -> str:
-    return os.getenv("CURRENT_NODE_ID", "langflow-executor-node")
-
-
-def _fetch_executor_node_metadata(component_class: str) -> dict[str, Any] | None:
-    """Query registry service for executor metadata for a component class."""
-    if component_class in EXECUTOR_METADATA_CACHE:
-        return EXECUTOR_METADATA_CACHE[component_class]
-
-    registry_url = _get_registry_service_url()
-    try:
-        with httpx.Client(timeout=5.0) as client:
-            response = client.get(
-                f"{registry_url.rstrip('/')}/api/v1/components/{component_class}/node"
-            )
-            response.raise_for_status()
-            payload = response.json()
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code != 404:
-            logger.warning(
-                "Registry request failed for component %s: %s", component_class, exc
-            )
-        EXECUTOR_METADATA_CACHE[component_class] = None
-        return None
-    except httpx.HTTPError as exc:
-        logger.warning(
-            "Unable to reach registry service at %s: %s", registry_url, exc
-        )
-        EXECUTOR_METADATA_CACHE[component_class] = None
-        return None
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "Unexpected error querying registry for %s: %s", component_class, exc
-        )
-        EXECUTOR_METADATA_CACHE[component_class] = None
-        return None
-
-    node = payload.get("node") or {}
-    components_map = payload.get("components") or {}
-    module_path = payload.get("module_path") or components_map.get(component_class)
-
-    metadata = {
-        "node_id": node.get("node_id"),
-        "api_url": node.get("api_url"),
-        "deployment_location": node.get("deployment_location"),
-        "registry_url": registry_url,
-        "module_path": module_path,
-    }
-    EXECUTOR_METADATA_CACHE[component_class] = metadata
-    return metadata
-
 
 class PlaceholderGraph(NamedTuple):
     """A placeholder graph structure for components, providing backwards compatibility.
@@ -155,11 +95,6 @@ class PlaceholderGraph(NamedTuple):
     session_id: str | None
     context: dict
     flow_name: str | None
-
-    @property
-    def vertices(self) -> list[Any]:
-        """Provide empty vertex list for compatibility with graph consumers."""
-        return []
 
 
 class Component(CustomComponent):
@@ -189,7 +124,6 @@ class Component(CustomComponent):
         self._components: list[Component] = []
         self._event_manager: EventManager | None = None
         self._state_model = None
-        self._executor_node_metadata: dict[str, Any] | None = None
 
         # Process input kwargs
         inputs = {}
@@ -446,174 +380,6 @@ class Component(CustomComponent):
         memo[id(self)] = new_component
         return new_component
 
-    def get_executor_node_metadata(self) -> dict[str, Any] | None:
-        """Return registry metadata for the executor node that owns this component."""
-        if self._executor_node_metadata is not None:
-            return self._executor_node_metadata
-        metadata = _fetch_executor_node_metadata(self.__class__.__name__)
-        self._executor_node_metadata = metadata
-        return metadata
-
-    def _serialize_value(self, value: Any) -> Any:
-        """Recursively convert values into JSON-serializable structures."""
-        if value is None or isinstance(value, (str, int, float, bool)):
-            return value
-
-        if isinstance(value, (datetime, date, time)):
-            return value.isoformat()
-
-        if isinstance(value, UUID):
-            return str(value)
-
-        if isinstance(value, dict):
-            return {k: self._serialize_value(v) for k, v in value.items()}
-
-        if isinstance(value, (list, tuple)):
-            return [self._serialize_value(item) for item in value]
-
-        if hasattr(value, "model_dump"):
-            try:
-                return self._serialize_value(value.model_dump())
-            except Exception:  # noqa: BLE001
-                pass
-
-        if hasattr(value, "dict"):
-            try:
-                return self._serialize_value(value.dict())
-            except Exception:  # noqa: BLE001
-                pass
-
-        if hasattr(value, "__dict__"):
-            try:
-                class_name = value.__class__.__name__
-                if any(skip in class_name for skip in ["Vertex", "Graph", "Edge", "EventManager"]):
-                    return None
-                return {
-                    k: self._serialize_value(v)
-                    for k, v in value.__dict__.items()
-                    if not k.startswith("_")
-                }
-            except Exception:  # noqa: BLE001
-                pass
-
-        try:
-            return str(value)
-        except Exception:  # noqa: BLE001
-            return None
-
-    def _deserialize_result(self, result: Any, result_type: str) -> Any:
-        """Attempt to reconstruct Langflow objects from serialized executor output."""
-        try:
-            if result_type == "Message" or (
-                isinstance(result, dict)
-                and any(
-                    key in result
-                    for key in [
-                        "sender",
-                        "category",
-                        "session_id",
-                        "timestamp",
-                        "flow_id",
-                        "sender_name",
-                    ]
-                )
-            ):
-                return Message(**result)
-
-            if result_type == "Data" or (
-                isinstance(result, dict) and ("data" in result or "text_key" in result)
-            ):
-                return Data(**result)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("[DESERIALIZE] Could not rebuild %s: %s", result_type, exc)
-
-        if isinstance(result, list):
-            return [self._deserialize_result(item, "Unknown") for item in result]
-
-        if isinstance(result, dict):
-            return {k: self._deserialize_result(v, "Unknown") for k, v in result.items()}
-
-        return result
-
-    def _build_stream_topic(self) -> str | None:
-        """Build the NATS stream topic for this component instance."""
-        user_id = getattr(self, "user_id", None) or getattr(self, "_user_id", None)
-        flow_id = None
-        if hasattr(self, "_vertex") and self._vertex and hasattr(self._vertex, "graph"):
-            flow_id = self._vertex.graph.flow_id
-        elif hasattr(self, "graph") and self.graph:
-            flow_id = self.graph.flow_id
-        elif hasattr(self, "_flow_id"):
-            flow_id = self._flow_id
-
-        if not user_id or not flow_id:
-            return None
-
-        component_id = self.get_id()
-        return f"droq.local.public.{user_id}.{flow_id}.{component_id}.out"
-
-    async def consume_stream_messages(
-        self,
-        topic: str | None = None,
-        timeout: float = 5.0,
-        max_messages: int = 10,
-        message_id: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """Consume messages from a NATS subject and optionally filter by message_id."""
-        if topic is None:
-            topic = self._build_stream_topic()
-
-        if not topic:
-            logger.warning("[NATS] Missing stream topic, cannot consume messages.")
-            return []
-
-        try:
-            import nats
-            from nats.js import JetStreamContext
-        except ImportError:
-            logger.warning("[NATS] nats-py is not installed; skipping stream consumption.")
-            return []
-
-        nc = None
-        messages: list[dict[str, Any]] = []
-        try:
-            nats_url = os.getenv("NATS_URL", "nats://localhost:4222")
-            nc = await nats.connect(nats_url)
-            js: JetStreamContext = nc.jetstream()
-
-            queue: asyncio.Queue = asyncio.Queue()
-
-            async def _message_handler(msg):
-                try:
-                    data = msg.data.decode("utf-8")
-                    payload = yaml.safe_load(data)
-                except Exception:  # noqa: BLE001
-                    payload = {"raw": msg.data}
-                await queue.put(payload)
-
-            sub = await js.subscribe(subject=topic, cb=_message_handler, durable=False)
-
-            try:
-                while len(messages) < max_messages:
-                    payload = await asyncio.wait_for(queue.get(), timeout=timeout)
-                    if message_id and payload.get("message_id") != message_id:
-                        continue
-                    messages.append(payload)
-                    if message_id:
-                        break
-            except asyncio.TimeoutError:
-                logger.debug("[NATS] Timeout waiting for messages on %s", topic)
-            finally:
-                await sub.unsubscribe()
-
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[NATS] Failed to consume stream %s: %s", topic, exc)
-        finally:
-            if nc and not nc.is_closed:
-                await nc.close()
-
-        return messages
-
     def _serialize_for_executor(self) -> dict[str, Any]:
         """Serialize component state for executor API.
 
@@ -833,32 +599,18 @@ class Component(CustomComponent):
             f"code_available={component_code is not None and len(component_code or '') > 0}"
         )
 
-        serialized_parameters = self._serialize_value(self._parameters)
-        serialized_config = self._serialize_value(
-            {k: v for k, v in self.__config.items() if k not in ["_vertex", "_event_manager"]}
-        )
-
-        serialized_input_values: dict[str, Any] = {}
-        for input_name, input_obj in self._inputs.items():
-            try:
-                input_value = input_obj.value
-                if input_value != UNDEFINED and not isinstance(input_value, Component):
-                    serialized_input_values[input_name] = self._serialize_value(input_value)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("[SERIALIZE] Failed to serialize input %s: %s", input_name, exc)
-
-        stream_topic = self._build_stream_topic()
-
         return {
             "component_class": component_class_name,
             "component_module": component_module,
             "component_code": component_code,  # Include code as fallback
-            "parameters": serialized_parameters,
-            "input_values": serialized_input_values or None,
-            "config": serialized_config,
+            "parameters": self._parameters,
+            "config": {
+                k: v
+                for k, v in self.__config.items()
+                if k not in ["_vertex", "_event_manager"]
+            },
             "display_name": self.display_name,
             "component_id": self.get_id(),
-            "stream_topic": stream_topic,
         }
 
     def _should_use_executor(self) -> bool:
@@ -1497,13 +1249,6 @@ class Component(CustomComponent):
                     name, f"Input is connected to {input_value.__self__.display_name}.{input_value.__name__}"
                 )
                 raise ValueError(msg)
-            if value is None:
-                logger.debug(
-                    "Skipping assignment of None for input '%s' on component '%s' to preserve default value",
-                    name,
-                    self.__class__.__name__,
-                )
-                return
             try:
                 self._inputs[name].value = value
             except Exception as e:
