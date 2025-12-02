@@ -789,9 +789,6 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
                     logger.info(
                         f"[NATS] Publishing to topic: {topic}, message_id: {message_id}, data keys: {list(publish_data.keys())}"
                     )
-                    print(
-                        f"[NATS] Publishing to topic: {topic}, message_id: {message_id}, data keys: {list(publish_data.keys())}"
-                    )
                     # Use the topic directly (already in format: droq.local.public.userid.workflowid.component.out)
                     await nats_client.publish(topic, publish_data)
                     logger.info(
