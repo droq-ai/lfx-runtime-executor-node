@@ -69,7 +69,7 @@ jobs:
       - name: Check formatting
         run: |
           source .venv/bin/activate
-          black --check src/node/ tests/
+          black --check src/ tests/
 
       - name: Lint
         run: |
