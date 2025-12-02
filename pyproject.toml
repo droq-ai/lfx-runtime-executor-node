@@ -1,7 +1,7 @@
 [project]
 name = "droqflow-langflow-executor"
 version = "1.0.0"
-description = "DroqFlow Langflow Executor Node - Provides a unified interface for building, deploying, and managing Langflow workflows with comprehensive AI model integrations and component orchestration"
+description = "Langflow Runtime Executor Node - Provides a unified interface for building, deploying, and managing Langflow components in DroqFlow"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
