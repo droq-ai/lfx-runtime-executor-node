@@ -7,7 +7,6 @@ Runs a FastAPI server that executes Langflow components.
 
 import logging
 import os
-import sys
 
 import uvicorn
 

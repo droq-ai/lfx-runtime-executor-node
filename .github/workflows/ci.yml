@@ -28,8 +28,9 @@ jobs:
           # Create virtual environment
           uv venv
           source .venv/bin/activate
-          # Install dependencies without editable package (workaround for hatchling issue)
-          uv pip install nats-py aiohttp
+          # Install the package in development mode
+          uv pip install -e .
+          # Install development dependencies
           uv pip install pytest pytest-asyncio black ruff mypy
           # Set PYTHONPATH for imports
           echo "PYTHONPATH=src" >> $GITHUB_ENV
@@ -69,11 +70,18 @@ jobs:
         run: |
           source .venv/bin/activate
           black --check src/ tests/
-      
+
       - name: Lint
         run: |
           source .venv/bin/activate
           ruff check src/ tests/
+
+      - name: Verify components
+        run: |
+          # Make the verification script executable
+          chmod +x scripts/verify-components.sh
+          # Run component verification to ensure node.json is valid
+          ./scripts/verify-components.sh
 
   docker:
     runs-on: ubuntu-latest
