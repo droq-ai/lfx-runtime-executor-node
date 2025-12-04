@@ -129,9 +129,7 @@ async def test_nats_subscribe(nats_url):
         await client.close()
 
         # Check that message was received
-        assert (
-            len(received_messages) > 0
-        ), f"No messages were received. Stream: {stream_name}"
+        assert len(received_messages) > 0, f"No messages were received. Stream: {stream_name}"
         # Check that our test message is in the received messages
         test_ids = [msg.get("test_id") for msg in received_messages]
         assert (
