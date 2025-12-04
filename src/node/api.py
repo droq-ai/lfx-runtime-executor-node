@@ -94,12 +94,41 @@ logger.info(f"Node dir: {_node_dir}")
 if os.path.exists(_components_json_path):
     try:
         with open(_components_json_path) as f:
-            _component_map = json.load(f)
-        logger.info(f"Loaded {len(_component_map)} component mappings from {_components_json_path}")
+
+            node_data = json.load(f)
+        # Extract components mapping from node.json structure
+        # node.json has structure: {"components": {"ComponentName": {"path": "...", ...}, ...}}
+        # Paths in node.json incorrectly have format "lfx.src.lfx.components..." 
+        # but should be "lfx.components..." (matching old components.json format)
+        if "components" in node_data and isinstance(node_data["components"], dict):
+            _component_map = {}
+            for component_name, component_info in node_data["components"].items():
+                if isinstance(component_info, dict) and "path" in component_info:
+                    path = component_info.get("path", "")
+                    # Transform path: "lfx.src.lfx.components..." -> "lfx.components..."
+                    # Remove the incorrect "lfx.src.lfx." prefix or "lfx.src." prefix
+                    original_path = path
+                    if path.startswith("lfx.src.lfx."):
+                        path = "lfx." + path[len("lfx.src.lfx.") :]
+                    elif path.startswith("lfx.src."):
+                        path = "lfx." + path[len("lfx.src.") :]
+                    if original_path != path:
+                        logger.debug(
+                            f"Transformed path for {component_name}: "
+                            f"{original_path} -> {path}"
+                        )
+                    _component_map[component_name] = path
+            logger.info(
+                f"Loaded {len(_component_map)} component mappings from {_components_json_path}"
+            )
+        else:
+            logger.warning(
+                f"node.json does not contain 'components' key or invalid structure at {_components_json_path}"
+            )
     except Exception as e:
-        logger.warning(f"Failed to load components.json: {e}")
+        logger.warning(f"Failed to load node.json: {e}")
 else:
-    logger.warning(f"components.json not found at {_components_json_path}")
+    logger.warning(f"node.json not found at {_components_json_path}")
 
 app = FastAPI(title="Langflow Executor Node", version="0.1.0")
 
@@ -189,11 +218,11 @@ async def load_component_class(
         HTTPException: If module or class cannot be loaded
     """
     # If module path is wrong (validation wrapper), try to find the correct module
-    # from components.json
+    # from node.json
     if module_name in ("lfx.custom.validate", "lfx.custom.custom_component.component"):
         logger.info(
             f"Module path is incorrect ({module_name}), "
-            f"looking up correct module for {class_name} in components.json"
+            f"looking up correct module for {class_name} in node.json"
         )
 
         # Look up the correct module path from the JSON mapping
@@ -210,7 +239,7 @@ async def load_component_class(
                     f"Failed to load {class_name} from mapped module {correct_module}: {e}"
                 )
         else:
-            logger.warning(f"Component {class_name} not found in components.json mapping")
+            logger.warning(f"Component {class_name} not found in node.json mapping")
 
     # First try loading from the provided module path
     try:
@@ -711,54 +740,62 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
         # Serialize result
         serialized_result = serialize_result(result)
 
-        # Check if stream_topic is provided (backend expects NATS publishing)
+        # Use NATS as primary communication method
         stream_topic = request.component_state.stream_topic
         message_id = request.message_id
+        nats_published = False
 
-        # Publish to NATS if stream_topic is provided
-        if stream_topic and _nats_client and _nats_client.js:
-            try:
-                # Prepare message payload matching backend's expected format
-                nats_payload = {
-                    "message_id": message_id,
-                    "result": serialized_result,
-                    "result_type": type(result).__name__,
-                    "execution_time": execution_time,
-                    "success": True,
-                }
+        # Always try to publish to NATS if stream_topic is provided
+        if stream_topic:
+            if _nats_client and _nats_client.js:
+                try:
+                    # Prepare message payload matching backend's expected format
+                    nats_payload = {
+                        "message_id": message_id,
+                        "result": serialized_result,
+                        "result_type": type(result).__name__,
+                        "execution_time": execution_time,
+                        "success": True,
+                    }
 
-                # Publish directly to the full stream_topic using JetStream
-                # stream_topic format: droq.local.public.{user_id}.{flow_id}.{component_id}.out
-                # We publish directly without adding stream_name prefix (it's already in the topic)
-                payload_bytes = json.dumps(nats_payload).encode()
-                headers = {"message_id": message_id} if message_id else None
+                    # Publish directly to the full stream_topic using JetStream
+                    # stream_topic format: droq.local.public.{user_id}.{flow_id}.{component_id}.out
+                    payload_bytes = json.dumps(nats_payload).encode()
+                    headers = {"message_id": message_id} if message_id else None
 
-                await _nats_client.js.publish(stream_topic, payload_bytes, headers=headers)
-                logger.info(
-                    f"[NATS] ✅ Published result to stream_topic={stream_topic}, "
-                    f"message_id={message_id}"
-                )
-            except Exception as e:
+                    await _nats_client.js.publish(stream_topic, payload_bytes, headers=headers)
+                    nats_published = True
+                    logger.info(
+                        f"[NATS] ✅ Published result to stream_topic={stream_topic}, "
+                        f"message_id={message_id}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"[NATS] ❌ Failed to publish to NATS: {e}. "
+                        f"Falling back to HTTP response.",
+                        exc_info=True,
+                    )
+            else:
                 logger.error(
-                    f"[NATS] ❌ Failed to publish to NATS: {e}. "
-                    f"Backend will fall back to HTTP result after timeout.",
-                    exc_info=True,
+                    f"[NATS] ❌ stream_topic={stream_topic} provided but NATS client "
+                    f"not available (client={_nats_client is not None}, "
+                    f"jetstream={_nats_client.js is not None if _nats_client else False}). "
+                    f"Falling back to HTTP response."
                 )
-        elif stream_topic and not _nats_client:
-            logger.warning(
-                f"[NATS] ⚠️ stream_topic={stream_topic} provided but NATS client not available. "
-                f"Backend will wait ~5+ seconds for NATS timeout before using HTTP result."
-            )
         else:
-            logger.debug(
-                "[NATS] No stream_topic provided - HTTP-only response (no NATS publishing needed)"
+            logger.warning(
+                "[NATS] ⚠️ No stream_topic provided in request. "
+                "Using HTTP response as fallback. Backend should provide stream_topic for NATS."
             )
 
         logger.info(
             f"Method {request.method_name} completed successfully "
-            f"in {execution_time:.3f}s, result type: {type(result).__name__}"
+            f"in {execution_time:.3f}s, result type: {type(result).__name__}, "
+            f"published_via_nats={nats_published}"
         )
 
+        # NATS is primary communication method
+        # Return HTTP response (for compatibility), but result should come via NATS
         return ExecutionResponse(
             result=serialized_result,
             success=True,
