@@ -1,7 +1,6 @@
 # syntax=docker/dockerfile:1
 # Dockerfile for Langflow Executor Node
-# Build from repo root: docker build -f node/Dockerfile -t langflow-executor-node .
-# OR build from node directory: docker build -f Dockerfile -t langflow-executor-node ../
+# Build from repo root: docker build -f Dockerfile -t droq-node-template:test .
 
 ################################
 # BUILDER STAGE
@@ -28,20 +27,19 @@ ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 
 # Copy Langflow dependency files first (for better caching)
-# These paths work when building from repo root
-COPY app/src/lfx/pyproject.toml /app/src/lfx/pyproject.toml
-COPY app/src/lfx/README.md /app/src/lfx/README.md
+COPY lfx/pyproject.toml /app/lfx/pyproject.toml
+COPY lfx/README.md /app/lfx/README.md
 
 # Copy executor node dependency files
-COPY node/pyproject.toml /app/node/pyproject.toml
+COPY pyproject.toml /app/node/pyproject.toml
 
 # Copy Langflow source (needed for installation)
-COPY app/src/lfx/src /app/src/lfx/src
+COPY lfx/src /app/lfx/src
 
 # Install Langflow (lfx) package with all dependencies
 # This installs lfx and all its dependencies from pyproject.toml
 RUN --mount=type=cache,target=/root/.cache/uv \
-    cd /app/src/lfx && \
+    cd /app/lfx && \
     uv pip install --system --no-cache -e .
 
 # Install common Langchain integration packages needed by components
@@ -69,10 +67,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     python-dotenv
 
 # Copy executor node source
-COPY node/src /app/node/src
+COPY src/node /app/node/src
 
 # Copy components.json mapping file
-COPY node/components.json /app/components.json
+COPY components.json /app/components.json
 
 ################################
 # RUNTIME STAGE
@@ -100,7 +98,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY --from=builder --chown=executor:root /app/node/src /app/src
-COPY --from=builder --chown=executor:root /app/src/lfx/src /app/src/lfx/src
+COPY --from=builder --chown=executor:root /app/lfx/src /app/src/lfx/src
 COPY --from=builder --chown=executor:root /app/components.json /app/components.json
 
 # Set environment variables
@@ -122,3 +120,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Run the executor node
 CMD ["python", "-m", "uvicorn", "node.api:app", "--host", "0.0.0.0", "--port", "8000"]
+
