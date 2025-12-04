@@ -94,11 +94,10 @@ logger.info(f"Node dir: {_node_dir}")
 if os.path.exists(_components_json_path):
     try:
         with open(_components_json_path) as f:
-
             node_data = json.load(f)
         # Extract components mapping from node.json structure
         # node.json has structure: {"components": {"ComponentName": {"path": "...", ...}, ...}}
-        # Paths in node.json incorrectly have format "lfx.src.lfx.components..." 
+        # Paths in node.json incorrectly have format "lfx.src.lfx.components..."
         # but should be "lfx.components..." (matching old components.json format)
         if "components" in node_data and isinstance(node_data["components"], dict):
             _component_map = {}
@@ -114,8 +113,7 @@ if os.path.exists(_components_json_path):
                         path = "lfx." + path[len("lfx.src.") :]
                     if original_path != path:
                         logger.debug(
-                            f"Transformed path for {component_name}: "
-                            f"{original_path} -> {path}"
+                            f"Transformed path for {component_name}: " f"{original_path} -> {path}"
                         )
                     _component_map[component_name] = path
             logger.info(
@@ -123,7 +121,8 @@ if os.path.exists(_components_json_path):
             )
         else:
             logger.warning(
-                f"node.json does not contain 'components' key or invalid structure at {_components_json_path}"
+                f"node.json does not contain 'components' key or invalid structure "
+                f"at {_components_json_path}"
             )
     except Exception as e:
         logger.warning(f"Failed to load node.json: {e}")
