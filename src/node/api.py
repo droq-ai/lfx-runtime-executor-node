@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 import time
+from datetime import UTC
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -92,7 +93,7 @@ logger.info(f"Looking for components.json at: {_components_json_path}")
 logger.info(f"Node dir: {_node_dir}")
 if os.path.exists(_components_json_path):
     try:
-        with open(_components_json_path, "r") as f:
+        with open(_components_json_path) as f:
             _component_map = json.load(f)
         logger.info(f"Loaded {len(_component_map)} component mappings from {_components_json_path}")
     except Exception as e:
@@ -187,10 +188,12 @@ async def load_component_class(
     Raises:
         HTTPException: If module or class cannot be loaded
     """
-    # If module path is wrong (validation wrapper), try to find the correct module from components.json
+    # If module path is wrong (validation wrapper), try to find the correct module
+    # from components.json
     if module_name in ("lfx.custom.validate", "lfx.custom.custom_component.component"):
         logger.info(
-            f"Module path is incorrect ({module_name}), looking up correct module for {class_name} in components.json"
+            f"Module path is incorrect ({module_name}), "
+            f"looking up correct module for {class_name} in components.json"
         )
 
         # Look up the correct module path from the JSON mapping
@@ -342,7 +345,7 @@ def serialize_result(result: Any) -> Any:
         return None
 
     # Handle primitive types
-    if isinstance(result, (str, int, float, bool)):
+    if isinstance(result, str | int | float | bool):
         return result
 
     # Skip type/metaclass objects - they can't be serialized
@@ -382,7 +385,7 @@ def serialize_result(result: Any) -> Any:
             return {"type": "Data", "data": result.data}
 
     # Handle lists/tuples first (before other checks)
-    if isinstance(result, (list, tuple)):
+    if isinstance(result, list | tuple):
         return [serialize_result(item) for item in result]
 
     # Handle dicts
@@ -452,7 +455,8 @@ def deserialize_input_value(value: Any) -> Any:
         # Log non-dict values for debugging
         if value is not None and value != "":
             logger.debug(
-                f"[DESERIALIZE] Non-dict value: type={type(value).__name__}, value={repr(value)[:100]}"
+                f"[DESERIALIZE] Non-dict value: type={type(value).__name__}, "
+                f"value={repr(value)[:100]}"
             )
         return value
 
@@ -461,13 +465,14 @@ def deserialize_input_value(value: Any) -> Any:
         vectors = value.get("vectors", [])
         texts = value.get("texts", [])
         logger.info(
-            f"[DESERIALIZE] 🎯 Found PrecomputedEmbeddings: {len(vectors)} vectors, {len(texts)} texts"
+            f"[DESERIALIZE] 🎯 Found PrecomputedEmbeddings: {len(vectors)} vectors, "
+            f"{len(texts)} texts"
         )
         # Reconstruct PrecomputedEmbeddings from serialized data
         try:
             from lfx.components.dfx.embeddings import PrecomputedEmbeddings
 
-            logger.info(f"[DESERIALIZE] 🎯 Reconstructing PrecomputedEmbeddings from embeddings.py")
+            logger.info("[DESERIALIZE] 🎯 Reconstructing PrecomputedEmbeddings from embeddings.py")
             return PrecomputedEmbeddings(vectors=vectors, texts=texts)
         except ImportError:
             # Fallback: try export_embeddings version
@@ -475,30 +480,33 @@ def deserialize_input_value(value: Any) -> Any:
                 from lfx.components.dfx.export_embeddings import PrecomputedEmbeddings
 
                 logger.info(
-                    f"[DESERIALIZE] 🎯 Reconstructing PrecomputedEmbeddings from export_embeddings.py"
+                    "[DESERIALIZE] 🎯 Reconstructing PrecomputedEmbeddings "
+                    "from export_embeddings.py"
                 )
                 return PrecomputedEmbeddings(
                     [{"vector": v, "text": t} for v, t in zip(vectors, texts)]
                 )
             except ImportError:
                 # Last fallback: create a local Embeddings wrapper
-                logger.info(f"[DESERIALIZE] 🎯 Creating local PrecomputedEmbeddings wrapper")
+                logger.info("[DESERIALIZE] 🎯 Creating local PrecomputedEmbeddings wrapper")
                 return _create_precomputed_embeddings(vectors, texts)
 
     # Check if it's an Embeddings type marker (fallback serialization)
     if value.get("type") == "Embeddings":
         logger.warning(
-            f"[DESERIALIZE] ⚠️ Found Embeddings type marker without vectors (class: {value.get('class')})"
+            f"[DESERIALIZE] ⚠️ Found Embeddings type marker without vectors "
+            f"(class: {value.get('class')})"
         )
         return _create_precomputed_embeddings([], [])
 
     # Try to reconstruct Data or Message objects
     try:
-        from lfx.schema.message import Message
         from lfx.schema.data import Data
+        from lfx.schema.message import Message
 
         # Check if it looks like a Message (has Message-specific fields)
-        # Message extends Data, so it has text_key, data, and Message-specific fields like sender, category, duration, etc.
+        # Message extends Data, so it has text_key, data, and Message-specific fields
+        # like sender, category, duration, etc.
         message_fields = [
             "sender",
             "category",
@@ -520,10 +528,12 @@ def deserialize_input_value(value: Any) -> Any:
             has_message_fields = has_message_fields or has_message_fields_in_data
 
         if has_message_fields:
-            # Fix timestamp format if present (convert various formats to YYYY-MM-DD HH:MM:SS UTC)
+            # Fix timestamp format if present (convert various formats to
+            # YYYY-MM-DD HH:MM:SS UTC)
             if "timestamp" in value and isinstance(value["timestamp"], str):
                 timestamp = value["timestamp"]
-                # Convert ISO format with T separator to space (e.g., "2025-11-14T13:09:23 UTC" -> "2025-11-14 13:09:23 UTC")
+                # Convert ISO format with T separator to space
+                # (e.g., "2025-11-14T13:09:23 UTC" -> "2025-11-14 13:09:23 UTC")
                 if "T" in timestamp:
                     # Replace T with space, but preserve the UTC part
                     timestamp = timestamp.replace("T", " ")
@@ -538,14 +548,14 @@ def deserialize_input_value(value: Any) -> Any:
                 if not timestamp.endswith(" UTC") and not timestamp.endswith(" UTC"):
                     # Try to parse and reformat using datetime
                     try:
-                        from datetime import datetime, timezone
+                        from datetime import datetime
 
                         # Try common formats
                         for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S %Z"]:
                             try:
                                 dt = datetime.strptime(timestamp.strip(), fmt)
                                 if dt.tzinfo is None:
-                                    dt = dt.replace(tzinfo=timezone.utc)
+                                    dt = dt.replace(tzinfo=UTC)
                                 timestamp = dt.strftime("%Y-%m-%d %H:%M:%S %Z")
                                 break
                             except ValueError:
@@ -559,12 +569,14 @@ def deserialize_input_value(value: Any) -> Any:
             try:
                 message_obj = Message(**value)
                 logger.debug(
-                    f"[DESERIALIZE] Successfully reconstructed Message object from dict with keys: {list(value.keys())}"
+                    f"[DESERIALIZE] Successfully reconstructed Message object from dict "
+                    f"with keys: {list(value.keys())}"
                 )
                 return message_obj
             except Exception as msg_error:
                 logger.warning(
-                    f"[DESERIALIZE] Failed to create Message from dict: {msg_error}, keys: {list(value.keys())}"
+                    f"[DESERIALIZE] Failed to create Message from dict: {msg_error}, "
+                    f"keys: {list(value.keys())}"
                 )
                 # Try to create with just the data dict if that exists
                 if "data" in value and isinstance(value["data"], dict):
@@ -576,7 +588,8 @@ def deserialize_input_value(value: Any) -> Any:
                         pass
                 raise
 
-        # Check if it looks like a Data object (has text_key or data field, but not Message-specific fields)
+        # Check if it looks like a Data object (has text_key or data field,
+        # but not Message-specific fields)
         if ("data" in value or "text_key" in value) and not has_message_fields:
             return Data(**value)
 
@@ -604,11 +617,16 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
 
     try:
         # Log what we received
+        code_len = (
+            len(request.component_state.component_code or "")
+            if request.component_state.component_code
+            else 0
+        )
         logger.info(
             f"Received execution request: "
             f"class={request.component_state.component_class}, "
             f"module={request.component_state.component_module}, "
-            f"code_length={len(request.component_state.component_code or '') if request.component_state.component_code else 0}"
+            f"code_length={code_len}"
         )
 
         # Load component class dynamically
@@ -649,8 +667,8 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
 
             component_params.update(deserialized_inputs)
             logger.info(
-                f"Merged {len(request.component_state.input_values)} input values from upstream components "
-                f"(deserialized to proper types)"
+                f"Merged {len(request.component_state.input_values)} input values "
+                f"from upstream components (deserialized to proper types)"
             )
 
         if request.component_state.config:
@@ -717,7 +735,8 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
 
                 await _nats_client.js.publish(stream_topic, payload_bytes, headers=headers)
                 logger.info(
-                    f"[NATS] ✅ Published result to stream_topic={stream_topic}, message_id={message_id}"
+                    f"[NATS] ✅ Published result to stream_topic={stream_topic}, "
+                    f"message_id={message_id}"
                 )
             except Exception as e:
                 logger.error(
@@ -732,7 +751,7 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
             )
         else:
             logger.debug(
-                f"[NATS] No stream_topic provided - HTTP-only response (no NATS publishing needed)"
+                "[NATS] No stream_topic provided - HTTP-only response (no NATS publishing needed)"
             )
 
         logger.info(
@@ -747,7 +766,7 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
             execution_time=execution_time,
         )
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         execution_time = time.time() - start_time
         error_msg = f"Execution timed out after {request.timeout}s"
         logger.error(error_msg)
