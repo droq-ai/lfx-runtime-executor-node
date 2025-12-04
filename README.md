@@ -105,19 +105,6 @@ Service information.
 - `LOG_LEVEL` - Logging level (default: `INFO`)
 - `RELOAD` - Enable auto-reload for development (default: `false`)
 
-## Architecture
-
-```
-Main Langflow Backend
-  ↓ HTTP POST /api/v1/execute
-Executor Node (this service)
-  ↓ Loads component class dynamically
-  ↓ Instantiates component
-  ↓ Executes method
-  ↓ Returns serialized result
-Main Langflow Backend
-```
-
 ## Integration with Main Backend
 
 The main Langflow backend calls this executor node from `Component._get_output_result()` when components need to execute. All components are now routed to the executor by default.
