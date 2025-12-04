@@ -15,7 +15,6 @@ cd node
 
 This script will:
 - Check for dependencies
-- Install Langflow if needed
 - Start the executor node with auto-reload enabled
 
 **Manual startup:**
@@ -44,14 +43,14 @@ cd /path/to/droqflow
 
 # Option 2: Build manually from repo root
 cd /path/to/droqflow
-docker build -f node/Dockerfile -t langflow-executor-node:latest .
+docker build -f node/Dockerfile -t lfx-runtime-executor-node:latest .
 
 # Option 3: Build from node directory (use parent as context)
 cd /path/to/droqflow/node
-docker build -f Dockerfile -t langflow-executor-node:latest ..
+docker build -f Dockerfile -t lfx-runtime-executor-node:latest ..
 
 # Run the container
-docker run -p 8000:8000 langflow-executor-node:latest
+docker run -p 8000:8000 lfx-runtime-executor-node:latest
 ```
 
 ## API Endpoints
@@ -107,7 +106,7 @@ Service information.
 
 ## Integration with Main Backend
 
-The main Langflow backend calls this executor node from `Component._get_output_result()` when components need to execute. All components are now routed to the executor by default.
+The main droqflow backend calls this executor node from `Component._get_output_result()` when components need to execute. All components are now routed to the executor by default.
 
 ## Docker Build
 
@@ -115,7 +114,7 @@ The Dockerfile is designed to be built from the repository root:
 
 ```bash
 # From repo root
-docker build -f node/Dockerfile -t langflow-executor-node:latest .
+docker build -f node/Dockerfile -t lfx-runtime-executor-node:latest .
 ```
 
 This allows the Dockerfile to access both:
