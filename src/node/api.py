@@ -87,9 +87,9 @@ def _create_precomputed_embeddings(vectors: list, texts: list):
 
 
 # Load component mapping from JSON file
-_components_json_path = os.path.join(_node_dir, "components.json")
+_components_json_path = os.path.join(_node_dir, "node.json")
 _component_map: dict[str, str] = {}
-logger.info(f"Looking for components.json at: {_components_json_path}")
+logger.info(f"Looking for node.json at: {_components_json_path}")
 logger.info(f"Node dir: {_node_dir}")
 if os.path.exists(_components_json_path):
     try:
