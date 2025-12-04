@@ -25,10 +25,7 @@ This script will:
 cd node
 uv sync
 
-# 2. Install Langflow dependencies (if needed)
-uv pip install -e ../app/src/node
-
-# 3. Run the executor
+# 2. Run the executor
 PYTHONPATH=src python -m node.main
 # or with auto-reload (default in start-local.sh)
 RELOAD=true PYTHONPATH=src python -m node.main
