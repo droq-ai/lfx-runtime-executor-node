@@ -22,7 +22,7 @@ dependencies = [
     "beautifulsoup4>=4.12.0,<5.0.0", # For HTML/XML parsing
     "lxml>=5.0.0,<6.0.0",           # For XML parsing with BeautifulSoup
     "pandas>=2.0.0,<3.0.0",         # For DataFrame handling
-    "qdrant-client>=1.11.0,<1.12.0",  # For Qdrant vector store (pinned for langchain-qdrant compatibility)
+    "qdrant-client>=1.15.1,<2.0.0",  # For Qdrant vector store (matches langchain-qdrant>=1.1.0 requirement)
     "langchain-qdrant>=1.1.0,<2.0.0",  # For LangChain Qdrant integration
     "langchain-core>=0.3.0,<1.0.0",    # Pin to 0.3.x - 1.x removed memory module
     # Note: Langflow dependencies will be added via path or package reference
@@ -71,4 +71,5 @@ python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
+
 
