@@ -69,8 +69,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Copy executor node source
 COPY src/node /app/node/src
 
-# Copy components.json mapping file
-COPY components.json /app/components.json
+# Copy node.json mapping file
+COPY node.json /app/node.json
 
 ################################
 # RUNTIME STAGE
@@ -99,7 +99,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 # Copy application code
 COPY --from=builder --chown=executor:root /app/node/src /app/src
 COPY --from=builder --chown=executor:root /app/lfx/src /app/src/lfx/src
-COPY --from=builder --chown=executor:root /app/components.json /app/components.json
+COPY --from=builder --chown=executor:root /app/node.json /app/node.json
 
 # Set environment variables
 ENV PYTHONPATH=/app/src:/app/src/lfx/src
