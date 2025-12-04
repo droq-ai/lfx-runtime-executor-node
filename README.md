@@ -1,4 +1,4 @@
-# Langflow Executor Node
+# LangFlow Runtime Executor Node
 
 A Droq node that executes Langflow components in isolated environments. This service receives component execution requests from the main Langflow backend and executes them via HTTP API.
 
