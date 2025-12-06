@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 from typing import List
 from langchain.embeddings.base import Embeddings
 from langchain_qdrant import QdrantVectorStore
@@ -155,12 +156,20 @@ class QdrantVectorStoreComponent(LCVectorStoreComponent):
     ]
 
     def _get_client(self) -> QdrantClient:
-        """Create a QdrantClient with the configured settings."""
+        """Create a QdrantClient with the configured settings.
+        
+        Reads QDRANT_HOST and QDRANT_PORT from environment variables if set,
+        otherwise uses component input values.
+        """
         use_https = getattr(self, "https", False)
         
+        # Read from environment variables first, fallback to component inputs
+        host = os.getenv("QDRANT_HOST") or (self.host if hasattr(self, "host") and self.host else "localhost")
+        port = int(os.getenv("QDRANT_PORT") or (self.port if hasattr(self, "port") and self.port else 6333))
+        
         server_kwargs = {
-            "host": self.host or "localhost",
-            "port": int(self.port) if self.port else 6333,
+            "host": host,
+            "port": port,
             "grpc_port": int(self.grpc_port) if self.grpc_port else 6334,
             "https": use_https,
             "api_key": self.api_key if self.api_key else None,
@@ -222,10 +231,13 @@ class QdrantVectorStoreComponent(LCVectorStoreComponent):
                 raise TypeError(msg)
 
         # Build connection kwargs (don't pass client directly - it can't be deepcopied)
+        # Read from environment variables first, fallback to component inputs
+        host = os.getenv("QDRANT_HOST") or (self.host if hasattr(self, "host") and self.host else "localhost")
+        port = int(os.getenv("QDRANT_PORT") or (self.port if hasattr(self, "port") and self.port else 6333))
         use_https = getattr(self, "https", False)
         connection_kwargs = {
-            "host": self.host or "localhost",
-            "port": int(self.port) if self.port else 6333,
+            "host": host,
+            "port": port,
             "grpc_port": int(self.grpc_port) if self.grpc_port else 6334,
             "https": use_https,
             "api_key": self.api_key if self.api_key else None,
