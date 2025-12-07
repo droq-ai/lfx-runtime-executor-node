@@ -34,20 +34,9 @@ The executor will run on `http://localhost:8000` by default.
 
 ### Docker Build
 
-**Important:** The Dockerfile must be built from the repository root, not from the `node/` directory.
-
+Buid and run the latest Langflow runtime node:
 ```bash
-# Option 1: Use the build script (recommended)
-cd /path/to/droqflow
-./node/build.sh
-
-# Option 2: Build manually from repo root
-cd /path/to/droqflow
-docker build -f node/Dockerfile -t lfx-runtime-executor-node:latest .
-
-# Option 3: Build from node directory (use parent as context)
-cd /path/to/droqflow/node
-docker build -f Dockerfile -t lfx-runtime-executor-node:latest ..
+docker build -f Dockerfile -t lfx-runtime-executor-node:latest .
 
 # Run the container
 docker run -p 8000:8000 lfx-runtime-executor-node:latest
