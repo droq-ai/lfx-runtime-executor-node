@@ -65,6 +65,7 @@ class NATSClient:
                     subjects=[f"{self.stream_name}.>"],
                     retention=RetentionPolicy.WORK_QUEUE,
                     storage=StorageType.FILE,
+                    max_bytes=10 * 1024 * 1024 * 1024,  # 10GB max stream size
                 )
             )
             logger.info(f"Stream '{self.stream_name}' created")

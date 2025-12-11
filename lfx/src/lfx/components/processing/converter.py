@@ -1,3 +1,4 @@
+import copy
 import json
 from typing import Any
 
@@ -17,7 +18,19 @@ def convert_to_message(v) -> Message:
     Returns:
         Message: Converted Message object
     """
-    return v if isinstance(v, Message) else v.to_message()
+    if isinstance(v, Message):
+        return v
+    if isinstance(v, Data):
+        # Use deep copy to ensure all nested data is preserved without truncation
+        payload = copy.deepcopy(v.data)
+        text_value = v.get_text() or ""
+        if ((not text_value) or text_value == v.default_value) and payload:
+            # Create full JSON representation without truncation
+            text_value = json.dumps(payload, ensure_ascii=False, indent=None)
+        # Ensure full data is preserved in both text and data fields
+        return Message(text=text_value, data=payload)
+    # Fallback to to_message() for other types
+    return v.to_message()
 
 
 def convert_to_data(v: DataFrame | Data | Message | dict, *, auto_parse: bool) -> Data:
