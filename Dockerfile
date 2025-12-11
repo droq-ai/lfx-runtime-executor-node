@@ -186,7 +186,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 # 3. The Qdrant container name is: qdrant
 #
 # These ENV vars are set for future use if component code is updated to read them:
-ENV QDRANT_HOST="172.17.0.3"
+ENV QDRANT_HOST="qdrant"
 ENV QDRANT_PORT="6333"
 ENV QDRANT_GRPC_PORT="6334"
 

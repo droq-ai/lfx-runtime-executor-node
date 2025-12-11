@@ -89,6 +89,34 @@ def _serialize_iterator(_: AsyncIterator | Generator | Iterator, *__) -> str:
 def _serialize_pydantic(obj: BaseModel, max_length: int | None, max_items: int | None) -> Any:
     """Handle modern Pydantic models."""
     serialized = obj.model_dump()
+    
+    # Special handling for Message objects: preserve full data and text fields without truncation
+    # Check if this is a Message object by class name, module, and fields
+    try:
+        from lfx.schema.message import Message
+        is_message = isinstance(obj, Message)
+    except ImportError:
+        # Fallback to class name and field check if import fails
+        is_message = (
+            obj.__class__.__name__ == "Message" 
+            and hasattr(obj.__class__, "__module__")
+            and ("message" in obj.__class__.__module__.lower() or "schema" in obj.__class__.__module__.lower())
+            and "data" in serialized 
+            and "text" in serialized
+        )
+    
+    if is_message:
+        result = {}
+        for k, v in serialized.items():
+            if k == "data" or k == "text":
+                # Preserve full data and text fields without truncation
+                # Recursively serialize without limits to preserve nested structures
+                result[k] = serialize(v, max_length=None, max_items=None)
+            else:
+                # Other fields can be truncated normally
+                result[k] = serialize(v, max_length, max_items)
+        return result
+    
     return {k: serialize(v, max_length, max_items) for k, v in serialized.items()}
 
 

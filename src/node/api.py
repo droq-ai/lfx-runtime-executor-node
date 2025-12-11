@@ -187,6 +187,7 @@ class ExecutionRequest(BaseModel):
     is_async: bool = False
     timeout: int = 30
     message_id: str | None = None  # Message ID for NATS publishing
+    output_name: str | None = None  # Output name for components with dynamic outputs
 
 
 class ExecutionResponse(BaseModel):
@@ -712,6 +713,16 @@ async def execute_component(request: ExecutionRequest) -> ExecutionResponse:
             f"config: {len(request.component_state.config or {})})"
         )
         component = component_class(**component_params)
+        
+        # Restore _current_output from request or config
+        # This is needed for components with dynamic outputs that use the same method
+        # Priority: 1) output_name in request, 2) _current_output in config
+        if hasattr(request, "output_name") and request.output_name:
+            component._current_output = request.output_name
+            logger.info(f"Restored _current_output from output_name: {component._current_output}")
+        elif request.component_state.config and "_current_output" in request.component_state.config:
+            component._current_output = request.component_state.config["_current_output"]
+            logger.info(f"Restored _current_output from config: {component._current_output}")
 
         # Get the method
         if not hasattr(component, request.method_name):

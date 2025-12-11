@@ -591,10 +591,24 @@ class Vertex:
         key,
         vertices: list[Vertex],
     ) -> None:
-        """Iterates over a list of vertices, builds each and updates the params dictionary."""
+        """Iterates over a list of vertices, builds each and updates the params dictionary.
+        
+        This method ensures ALL vertices in the list are built and their results collected
+        before proceeding, to handle cases where inputs arrive at different times.
+        """
+        # Initialize the list to collect all results
         self.params[key] = []
+        
+        # Build ALL vertices first to ensure they're all ready
+        # This ensures we wait for all inputs before the component executes
+        results = []
         for vertex in vertices:
+            # This will wait for the vertex to be built if it hasn't been yet
             result = await vertex.get_result(self, target_handle_name=key)
+            results.append(result)
+        
+        # Now process all collected results
+        for result in results:
             # Weird check to see if the params[key] is a list
             # because sometimes it is a Data and breaks the code
             if not isinstance(self.params[key], list):

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+from datetime import datetime
 from typing import List
 from langchain.embeddings.base import Embeddings
 from langchain_qdrant import QdrantVectorStore
@@ -9,7 +10,6 @@ from qdrant_client import QdrantClient
 from lfx.base.vectorstores.model import LCVectorStoreComponent, check_cached_vector_store
 from lfx.helpers.data import docs_to_data
 from lfx.io import (
-    BoolInput,
     DropdownInput,
     HandleInput,
     IntInput,
@@ -44,6 +44,11 @@ def generate_content_hash(data: dict) -> str:
     
     # SHA256 hash, truncated to 32 chars
     return hashlib.sha256(serialized.encode('utf-8')).hexdigest()[:32]
+
+
+def _get_content_hash_from_text(content: str) -> str:
+    """Generate SHA256 hash of text content for duplicate detection."""
+    return hashlib.sha256(content.encode('utf-8')).hexdigest()
 
 
 class PrecomputedEmbeddingsFromData(Embeddings):
@@ -200,6 +205,47 @@ class QdrantVectorStoreComponent(LCVectorStoreComponent):
         metadatas = []
         content_ids = []
         
+        # Get existing content hashes to check for duplicates (always enabled)
+        existing_hashes = set()
+        try:
+            client = self._get_client()
+            collections = client.get_collections()
+            collection_names = [c.name for c in collections.collections]
+            if self.collection_name in collection_names:
+                # Scroll through existing documents to get content hashes
+                offset = None
+                while True:
+                    result, next_offset = client.scroll(
+                        collection_name=self.collection_name,
+                        limit=100,
+                        offset=offset,
+                        with_payload=True,
+                        with_vectors=False
+                    )
+                    if not result:
+                        break
+                    for point in result:
+                        payload = point.payload or {}
+                        # Check for content hash in metadata
+                        metadata = payload.get(self.metadata_payload_key, {})
+                        if isinstance(metadata, dict):
+                            content_hash = metadata.get('content_hash')
+                            if content_hash:
+                                existing_hashes.add(content_hash)
+                        # Also check page_content for hash
+                        page_content = payload.get(self.content_payload_key, '')
+                        if page_content:
+                            content_hash = _get_content_hash_from_text(str(page_content))
+                            existing_hashes.add(content_hash)
+                    if next_offset is None:
+                        break
+                    offset = next_offset
+                self.log(f"Found {len(existing_hashes)} existing content hashes in collection")
+        except Exception as e:
+            self.log(f"Warning: Could not check for duplicates: {e}")
+        
+        skipped_count = 0
+        
         for _input in self.ingest_data or []:
             if isinstance(_input, Data):
                 doc = _input.to_lc_document()
@@ -211,13 +257,40 @@ class QdrantVectorStoreComponent(LCVectorStoreComponent):
             else:
                 continue
             
-            texts.append(doc.page_content)
-            metadatas.append(doc.metadata if hasattr(doc, 'metadata') else {})
-            
             # Generate content hash for deduplication
             # Use the full data dict (which includes all fields except embeddings)
             content_id = generate_content_hash(data_dict)
+            
+            # Also generate hash from text content for duplicate checking
+            text_content = doc.page_content or ""
+            text_hash = _get_content_hash_from_text(text_content)
+            
+            # Check for duplicates (always enabled - duplicates prevented by default)
+            if content_id in existing_hashes or text_hash in existing_hashes:
+                skipped_count += 1
+                self.log(f"Skipping duplicate document with hash: {content_id[:16]}...")
+                continue
+            
+            # Prepare metadata with content hash and timestamp
+            metadata = doc.metadata if hasattr(doc, 'metadata') else {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            
+            # Add content hash to metadata
+            metadata['content_hash'] = text_hash
+            
+            # Always add timestamp (standard behavior)
+            metadata['timestamp'] = datetime.utcnow().isoformat() + 'Z'
+            metadata['stored_at'] = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+            
+            texts.append(doc.page_content)
+            metadatas.append(metadata)
             content_ids.append(content_id)
+            existing_hashes.add(content_id)  # Track in current batch
+            existing_hashes.add(text_hash)
+        
+        if skipped_count > 0:
+            self.log(f"Skipped {skipped_count} duplicate document(s)")
 
         # If no valid embedding model, try to extract pre-computed embeddings from data
         embedding_model = self.embedding
